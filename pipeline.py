@@ -15,8 +15,10 @@ import copy
 
 from src.inference import LLM
 from src.ask_agent import AskAgent
-from src.mesh_utils import cadquery_to_mesh, load_mesh_from_stl, normalize_mesh, mesh_to_pointcloud
-from src.evaluation import chamfer_distance
+
+# NOTE: mesh/Chamfer dependencies (cadquery, trimesh) are imported lazily inside
+# evaluate_code() so that --skip-codegen runs on machines without the CAD stack.
+
 from config.clarification import (
     ANSWER_QUESTIONS_PROMPT_TEMPLATE,
     CLARIFY_WITH_ANSWERS_PROMPT_TEMPLATE
@@ -62,6 +64,10 @@ def extract_code(response: str) -> str:
 
 def evaluate_code(code: str, uid: str, gt_mesh_dir: str = GT_MESH_DIR, n_points: int = 8192) -> Dict:
     """Evaluate generated CadQuery code against a ground-truth STL via Chamfer distance."""
+    # Lazy imports: the CAD stack is only needed when code is actually generated.
+    from src.mesh_utils import cadquery_to_mesh, load_mesh_from_stl, normalize_mesh, mesh_to_pointcloud
+    from src.evaluation import chamfer_distance
+
     result = {'success': False, 'chamfer_distance': None, 'error': None}
 
     gt_mesh_path = Path(gt_mesh_dir) / f"{uid}.stl"
@@ -180,23 +186,37 @@ class ParallelClarificationPipeline:
         clarify_agent_model: str = CLARIFY_AGENT_MODEL,
         answer_model: str = ANSWER_MODEL,
         code_gen_model: str = CODE_GEN_MODEL,
-        batch_size: int = 8
+        batch_size: int = 8,
+        skip_codegen: bool = False
     ):
-        """Initialize the pipeline with models for each stage."""
+        """Initialize the pipeline with models for each stage.
+
+        Args:
+            skip_codegen: If True, run only Steps 1-3 (detect -> ask/answer ->
+                corrected description) and never load the local code-gen model.
+                No mesh / Chamfer evaluation is performed; this makes the
+                text-only stages runnable without a GPU.
+        """
         print("Initializing Parallel Clarification Pipeline...")
-        
+
         # Stage 1 & 3: ClarifyAgent (detect misleading + generate questions + generate corrected description)
         print(f"  Loading ClarifyAgent: {clarify_agent_model}")
         self.clarify_agent = AskAgent(model_name=clarify_agent_model)
-        
+
         # Stage 2: Answer questions
         print(f"  Loading Answer Model: {answer_model}")
         self.answer_llm = LLM(model_name=answer_model)
-        
-        # Stage 4: Code generation
-        print(f"  Loading Code Gen Model: {code_gen_model}")
-        self.code_gen_llm = LLM(model_name=code_gen_model)
-        
+
+        # Stage 4: Code generation (skipped in text-only mode)
+        self.skip_codegen = skip_codegen
+        if skip_codegen:
+            print("  skip_codegen=True: Code Gen Model not loaded "
+                  "(pipeline stops after the corrected description)")
+            self.code_gen_llm = None
+        else:
+            print(f"  Loading Code Gen Model: {code_gen_model}")
+            self.code_gen_llm = LLM(model_name=code_gen_model)
+
         self.batch_size = batch_size
         print(f"  Batch size: {batch_size}")
         print("Pipeline initialized!")
@@ -394,8 +414,21 @@ class ParallelClarificationPipeline:
                     standardized_prompt = self._extract_standardized_prompt(response)
                     results[orig_idx]["_standardized_prompt"] = standardized_prompt
         
-        # Step 4: Batch generate code
-        if active_indices:
+        # Step 4: Batch generate code (skipped in text-only mode)
+        if active_indices and self.skip_codegen:
+            if verbose:
+                print(f"\nStep 4: SKIPPED (skip_codegen=True) for {len(active_indices)} samples")
+            for i in active_indices:
+                # standardized == original already handled above; everything else
+                # simply has no code/evaluation until a later --skip-codegen=False run.
+                if results[i].get("evaluation") is None:
+                    results[i]["evaluation"] = {
+                        "success": False,
+                        "chamfer_distance": None,
+                        "error": "code generation skipped (--skip-codegen)"
+                    }
+
+        elif active_indices:
             if verbose:
                 print(f"\nStep 4: Batch generating code for {len(active_indices)} samples...")
             
@@ -507,6 +540,7 @@ def process_all_misleading_samples_parallel(
     clarify_agent_model: Optional[str] = None,
     answer_model: Optional[str] = None,
     code_gen_model: Optional[str] = None,
+    skip_codegen: bool = False,
 ):
     """
     Process all misleading samples from JSON file in parallel batches.
@@ -522,6 +556,8 @@ def process_all_misleading_samples_parallel(
         clarify_agent_model: Model for ask/clarify agent
         answer_model: Model for answer agent
         code_gen_model: Model for code generation
+        skip_codegen: If True, run only Steps 1-3 (clarification text); the
+            local coder is not loaded and no Chamfer evaluation is done.
     """
     # Load all samples
     if verbose:
@@ -579,14 +615,18 @@ def process_all_misleading_samples_parallel(
         print(f"Models:")
         print(f"  Clarify Agent: {clarify_agent_model or CLARIFY_AGENT_MODEL}")
         print(f"  Answer Agent: {answer_model or ANSWER_MODEL}")
-        print(f"  Code Gen: {code_gen_model or CODE_GEN_MODEL}")
-    
+        if skip_codegen:
+            print(f"  Code Gen: SKIPPED (--skip-codegen)")
+        else:
+            print(f"  Code Gen: {code_gen_model or CODE_GEN_MODEL}")
+
     # Initialize pipeline
     pipeline = ParallelClarificationPipeline(
         clarify_agent_model=clarify_agent_model or CLARIFY_AGENT_MODEL,
         answer_model=answer_model or ANSWER_MODEL,
         code_gen_model=code_gen_model or CODE_GEN_MODEL,
-        batch_size=inference_batch_size
+        batch_size=inference_batch_size,
+        skip_codegen=skip_codegen
     )
     
     # Find starting batch number for resume
@@ -704,6 +744,7 @@ def process_all_misleading_samples_parallel(
                     "answer_model": answer_model or ANSWER_MODEL,
                     "code_gen_model": code_gen_model or CODE_GEN_MODEL
                 },
+                "skip_codegen": skip_codegen,
                 "json_path": json_path
             },
             "stats": stats,
@@ -762,9 +803,13 @@ if __name__ == "__main__":
                        help=f"Model for answer agent (default: {ANSWER_MODEL})")
     parser.add_argument("--code_model", type=str, default=None,
                        help=f"Model for code generation (default: {CODE_GEN_MODEL})")
-    
+    parser.add_argument("--skip-codegen", action="store_true",
+                       help="Run only Steps 1-3 (detect/Q&A/corrected description). "
+                            "Does not load the local coder and skips Chamfer evaluation, "
+                            "so no GPU or GT mesh is required.")
+
     args = parser.parse_args()
-    
+
     process_all_misleading_samples_parallel(
         json_path=args.json_path,
         output_dir=args.output_dir,
@@ -775,5 +820,6 @@ if __name__ == "__main__":
         end_idx=args.end_idx,
         clarify_agent_model=args.clarify_model,
         answer_model=args.answer_model,
-        code_gen_model=args.code_model
+        code_gen_model=args.code_model,
+        skip_codegen=args.skip_codegen
     )

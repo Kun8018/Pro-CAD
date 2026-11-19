@@ -75,6 +75,35 @@ python pipeline.py \
   --output_dir ./clarification_results
 ```
 
+### Text-only mode (no GPU, no GT mesh)
+
+`--skip-codegen` runs only Steps 1–3 (detect → ask/answer → corrected description): the local Coder is never loaded, CadQuery/mesh dependencies are imported lazily, and no Chamfer evaluation is performed. This is enough for analyzing the Clarifier → Coder hand-off and runs on a CPU-only machine with just the dataset JSONs:
+
+```bash
+python pipeline.py \
+  --json_path dataset/selected_misleading_samples_test \
+  --output_dir ./clarification_results_textonly \
+  --skip-codegen
+```
+
+### Spec-fidelity probe
+
+`probe_spec_fidelity.py` audits the single hand-off between the two agents — the `standardized_prompt` the Coder receives — against the ground-truth information set (original prompt + Q&A answers). It reports three defect classes per sample, grouped by misleading type:
+
+- **dropped** — geometric fact present in the source, missing from the standardized prompt
+- **unsupported** — value in the standardized prompt with no source support (invention)
+- **carryover** — wrong value from the misleading prompt survives clarification
+
+The default channel is deterministic (numeric slot extraction with unit normalization); `--with-llm` adds a fact-level semantic judge. Both channels also report mean Chamfer distance of defective vs. clean samples when evaluations are present:
+
+```bash
+# deterministic, CPU-only — works on --skip-codegen output
+python probe_spec_fidelity.py --results_dir ./clarification_results
+
+# add the LLM semantic judge
+python probe_spec_fidelity.py --results_dir ./clarification_results --with-llm
+```
+
 ## Training
 
 SFT uses [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory). See `training/README.md` for setup (install LLaMA-Factory, then copy the ProCAD data + configs from `training/`).
