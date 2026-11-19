@@ -44,6 +44,7 @@ GT_MESH_DIR = os.environ.get(
 CLARIFY_AGENT_MODEL = os.environ.get("CLARIFY_AGENT_MODEL", "gpt-4o-mini-2024-07-18")
 ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "gpt-5-mini-2025-08-07")
 CODE_GEN_MODEL = os.environ.get("CODE_GEN_MODEL", "BBexist/ProCAD-coder")
+SPEC_MANAGER_MODEL = os.environ.get("SPEC_MANAGER_MODEL", "gpt-4o-mini-2024-07-18")
 
 
 # =============================================================================
@@ -187,7 +188,11 @@ class ParallelClarificationPipeline:
         answer_model: str = ANSWER_MODEL,
         code_gen_model: str = CODE_GEN_MODEL,
         batch_size: int = 8,
-        skip_codegen: bool = False
+        skip_codegen: bool = False,
+        use_spec_manager: bool = False,
+        spec_no_provenance: bool = False,
+        spec_extra_rounds: int = 1,
+        spec_manager_model: Optional[str] = None
     ):
         """Initialize the pipeline with models for each stage.
 
@@ -196,6 +201,16 @@ class ParallelClarificationPipeline:
                 corrected description) and never load the local code-gen model.
                 No mesh / Chamfer evaluation is performed; this makes the
                 text-only stages runnable without a GPU.
+            use_spec_manager: If True, a Spec Manager builds a structured spec
+                (feature graph with per-field provenance) from the prompt + Q&A
+                and its rendering REPLACES the Clarifier's standardized_prompt
+                as the Coder hand-off. See THIRD_AGENT_IDEA.md.
+            spec_no_provenance: Ablation. Same JSON schema, but source tags are
+                stripped from the Coder hand-off and no extra unresolved-field-
+                driven question rounds are run ("structured prompt only").
+            spec_extra_rounds: Max extra clarification rounds the Spec Manager
+                may trigger for unresolved (missing/agent-assumed) fields.
+            spec_manager_model: Model backing the Spec Manager (API model).
         """
         print("Initializing Parallel Clarification Pipeline...")
 
@@ -216,6 +231,18 @@ class ParallelClarificationPipeline:
         else:
             print(f"  Loading Code Gen Model: {code_gen_model}")
             self.code_gen_llm = LLM(model_name=code_gen_model)
+
+        # Spec Manager (third agent) — lazily initialized only when enabled
+        self.use_spec_manager = use_spec_manager
+        self.spec_no_provenance = spec_no_provenance
+        # The no-provenance ablation removes proactive question rounds.
+        self.spec_extra_rounds = 0 if spec_no_provenance else spec_extra_rounds
+        self.spec_manager_model = spec_manager_model or SPEC_MANAGER_MODEL
+        self._spec_manager = None
+        if use_spec_manager:
+            print(f"  Spec Manager: enabled (model={self.spec_manager_model}, "
+                  f"provenance={not spec_no_provenance}, "
+                  f"extra_rounds={self.spec_extra_rounds})")
 
         self.batch_size = batch_size
         print(f"  Batch size: {batch_size}")
@@ -414,6 +441,12 @@ class ParallelClarificationPipeline:
                     standardized_prompt = self._extract_standardized_prompt(response)
                     results[orig_idx]["_standardized_prompt"] = standardized_prompt
         
+        # Step 3.5 (optional third agent): Spec Manager replaces the free-text
+        # standardized_prompt with a structured, provenance-tagged spec.
+        if self.use_spec_manager and active_indices:
+            self._run_spec_manager_stage(
+                results, samples, active_indices, step1_analyses, verbose)
+
         # Step 4: Batch generate code (skipped in text-only mode)
         if active_indices and self.skip_codegen:
             if verbose:
@@ -470,11 +503,28 @@ class ParallelClarificationPipeline:
                 for idx, (response, orig_idx) in enumerate(zip(step4_responses, step4_indices)):
                     results[orig_idx]["step4_code"] = response
                     results[orig_idx]["step4_code_extracted"] = extract_code(response)
-                    
+
                     # Evaluate code
                     uid = results[orig_idx]["uid"]
                     eval_result = evaluate_code(results[orig_idx]["step4_code_extracted"], uid)
                     results[orig_idx]["evaluation"] = eval_result
+
+        # Step 5 (optional): spec-grounded verification of the generated code.
+        # Runs without executing code / GT mesh; failures are stored together
+        # with a re-clarification request routed back to the Clarifier.
+        if self.use_spec_manager and active_indices:
+            from src.spec_verifier import (
+                verify_code_against_spec, build_reclarify_request,
+            )
+            for i in active_indices:
+                spec = results[i].get("step3_spec")
+                code = results[i].get("step4_code_extracted")
+                if not spec or not code:
+                    continue
+                verification = verify_code_against_spec(spec, code)
+                verification["reclarify_request"] = build_reclarify_request(
+                    verification)
+                results[i]["step5_verification"] = verification
         
         # Set evaluation_original and evaluation_misleading from JSON
         for i, result in enumerate(results):
@@ -492,6 +542,139 @@ class ParallelClarificationPipeline:
         
         return results
     
+    def _run_spec_manager_stage(
+        self,
+        results: List[Dict],
+        samples: List[Dict],
+        active_indices: List[int],
+        step1_analyses: List[Dict],
+        verbose: bool = True
+    ) -> None:
+        """
+        Spec Manager stage (third agent).
+
+        1. Extract a structured spec from the (possibly misleading) prompt.
+        2. Merge the round-1 Clarifier Q&A answers (provenance-ranked;
+           answer-confirmed overrides carried-over wrong user-stated values).
+        3. Up to spec_extra_rounds additional rounds driven ONLY by unresolved
+           fields (missing / agent-assumed). Disabled in the no-provenance
+           ablation.
+        4. Render the spec as the Coder hand-off, replacing _standardized_prompt.
+
+        Every artifact is stored on the result dict: step3_spec,
+        spec_resolutions (machine-readable change log), spec_questions per
+        extra round, spec_unresolved_remaining. The Clarifier's original
+        standardized_prompt is preserved for A/B comparison.
+        """
+        from src.spec_manager import (
+            SpecManager, empty_spec, merge_specs, render_for_coder,
+            unresolved_fields, template_questions,
+        )
+
+        if self._spec_manager is None:
+            self._spec_manager = SpecManager(model_name=self.spec_manager_model)
+        sm = self._spec_manager
+
+        def _misleading_of(i: int) -> str:
+            s = samples[i]
+            return (s.get("misleading_description") or s.get("misleading_prompt")
+                    or s.get("original_prompt"))
+
+        idxs = [i for i in active_indices if results[i].get("step2_answers")]
+        if not idxs:
+            return
+
+        # 1. Initial structured spec from the user input.
+        if verbose:
+            print(f"\nStep 3.5: Spec Manager extracting specs for {len(idxs)} samples...")
+        msgs_list = [sm.extract_messages(_misleading_of(i)) for i in idxs]
+        responses = sm.llm.batch_inference(
+            msgs_list, batch_size=self.batch_size,
+            max_new_tokens=2048, temperature=0)
+        specs = {}
+        for i, resp in zip(idxs, responses):
+            specs[i] = sm.parse_spec(resp) or empty_spec()
+
+        # 2. Merge the round-1 Q&A (same questions/answers as Steps 1-2).
+        def _round1_qa_text(i: int) -> str:
+            questions = step1_analyses[i].get("questions", [])
+            answers = results[i].get("step2_answers") or ""
+            q = "\n".join(f"Q{n+1}: {qq}" for n, qq in enumerate(questions))
+            return f"{q}\nA: {answers}".strip()
+
+        msgs_list = [sm.update_messages(specs[i], _round1_qa_text(i)) for i in idxs]
+        responses = sm.llm.batch_inference(
+            msgs_list, batch_size=self.batch_size,
+            max_new_tokens=2048, temperature=0)
+        for i, resp in zip(idxs, responses):
+            updated = sm.parse_spec(resp)
+            if updated is not None:
+                specs[i] = merge_specs(specs[i], updated)
+
+        # 3. Additional unresolved-field-driven clarification rounds.
+        extra_questions_log: Dict[int, List[List[str]]] = {i: [] for i in idxs}
+        for round_idx in range(self.spec_extra_rounds):
+            todo = [(i, unresolved_fields(specs[i])) for i in idxs]
+            todo = [(i, u) for i, u in todo if u]
+            if not todo:
+                break
+            if verbose:
+                print(f"  Spec Manager extra round {round_idx + 1}: "
+                      f"{len(todo)} samples with unresolved fields")
+
+            # 3a. questions (LLM; deterministic template fallback per sample)
+            q_msgs = [sm.questions_messages(specs[i], u, max_questions=5)
+                      for i, u in todo]
+            q_responses = sm.llm.batch_inference(
+                q_msgs, batch_size=self.batch_size,
+                max_new_tokens=512, temperature=0)
+            questions_per = {}
+            for (i, u), resp in zip(todo, q_responses):
+                qs = sm.parse_questions(resp) or template_questions(u)
+                questions_per[i] = qs
+                extra_questions_log[i].append(qs)
+
+            # 3b. answer the questions with the same User Simulator as Step 2
+            a_msgs = []
+            for i, _ in todo:
+                questions_str = "\n".join(
+                    f"{n+1}. {q}" for n, q in enumerate(questions_per[i]))
+                prompt = ANSWER_QUESTIONS_PROMPT_TEMPLATE.format(
+                    original_prompt=samples[i].get("original_prompt"),
+                    misleading_prompt=_misleading_of(i),
+                    questions=questions_str)
+                a_msgs.append([{"role": "user", "content": prompt}])
+            a_responses = self.answer_llm.batch_inference(
+                a_msgs, batch_size=self.batch_size, max_new_tokens=1024)
+
+            # 3c. merge answers back into the specs
+            u_msgs = [
+                sm.update_messages(
+                    specs[i],
+                    f"{chr(10).join(f'Q{n+1}: {q}' for n, q in enumerate(questions_per[i]))}"
+                    f"\nA: {ans}")
+                for (i, _), ans in zip(todo, a_responses)
+            ]
+            u_responses = sm.llm.batch_inference(
+                u_msgs, batch_size=self.batch_size,
+                max_new_tokens=2048, temperature=0)
+            for (i, _), resp in zip(todo, u_responses):
+                updated = sm.parse_spec(resp)
+                if updated is not None:
+                    specs[i] = merge_specs(specs[i], updated)
+
+        # 4. Render hand-offs and store artifacts.
+        for i in idxs:
+            spec = specs[i]
+            results[i]["step3_clarifier_standardized_prompt"] = \
+                results[i].get("_standardized_prompt")
+            results[i]["step3_spec"] = spec
+            results[i]["spec_resolutions"] = spec.get("resolutions", [])
+            results[i]["spec_extra_questions"] = extra_questions_log.get(i, [])
+            results[i]["spec_unresolved_remaining"] = unresolved_fields(spec)
+            results[i]["_standardized_prompt"] = render_for_coder(
+                spec, with_provenance=not self.spec_no_provenance)
+
     def _extract_standardized_prompt(self, response: str) -> Optional[str]:
         """Extract standardized_prompt from step3 JSON response."""
         import re
@@ -541,6 +724,10 @@ def process_all_misleading_samples_parallel(
     answer_model: Optional[str] = None,
     code_gen_model: Optional[str] = None,
     skip_codegen: bool = False,
+    use_spec_manager: bool = False,
+    spec_no_provenance: bool = False,
+    spec_extra_rounds: int = 1,
+    spec_manager_model: Optional[str] = None,
 ):
     """
     Process all misleading samples from JSON file in parallel batches.
@@ -619,6 +806,10 @@ def process_all_misleading_samples_parallel(
             print(f"  Code Gen: SKIPPED (--skip-codegen)")
         else:
             print(f"  Code Gen: {code_gen_model or CODE_GEN_MODEL}")
+        if use_spec_manager:
+            print(f"  Spec Manager: enabled, provenance={not spec_no_provenance}, "
+                  f"extra_rounds={0 if spec_no_provenance else spec_extra_rounds}, "
+                  f"model={spec_manager_model or SPEC_MANAGER_MODEL}")
 
     # Initialize pipeline
     pipeline = ParallelClarificationPipeline(
@@ -626,7 +817,11 @@ def process_all_misleading_samples_parallel(
         answer_model=answer_model or ANSWER_MODEL,
         code_gen_model=code_gen_model or CODE_GEN_MODEL,
         batch_size=inference_batch_size,
-        skip_codegen=skip_codegen
+        skip_codegen=skip_codegen,
+        use_spec_manager=use_spec_manager,
+        spec_no_provenance=spec_no_provenance,
+        spec_extra_rounds=spec_extra_rounds,
+        spec_manager_model=spec_manager_model
     )
     
     # Find starting batch number for resume
@@ -745,6 +940,10 @@ def process_all_misleading_samples_parallel(
                     "code_gen_model": code_gen_model or CODE_GEN_MODEL
                 },
                 "skip_codegen": skip_codegen,
+                "use_spec_manager": use_spec_manager,
+                "spec_no_provenance": spec_no_provenance,
+                "spec_extra_rounds": spec_extra_rounds,
+                "spec_manager_model": spec_manager_model or SPEC_MANAGER_MODEL,
                 "json_path": json_path
             },
             "stats": stats,
@@ -807,6 +1006,19 @@ if __name__ == "__main__":
                        help="Run only Steps 1-3 (detect/Q&A/corrected description). "
                             "Does not load the local coder and skips Chamfer evaluation, "
                             "so no GPU or GT mesh is required.")
+    parser.add_argument("--use-spec-manager", action="store_true",
+                       help="Enable the third agent: a Spec Manager builds a structured, "
+                            "provenance-tagged spec from prompt + Q&A and its rendering "
+                            "replaces the Clarifier's standardized_prompt as the Coder hand-off.")
+    parser.add_argument("--spec-no-provenance", action="store_true",
+                       help="Ablation: same structured JSON schema handed to the Coder, but "
+                            "source tags stripped and no unresolved-field question rounds. "
+                            "Isolates the gain of provenance/active behaviour from the schema.")
+    parser.add_argument("--spec-extra-rounds", type=int, default=1,
+                       help="Max extra clarification rounds the Spec Manager may trigger "
+                            "for unresolved fields (default: 1; 0 disables).")
+    parser.add_argument("--spec-manager-model", type=str, default=None,
+                       help=f"Model backing the Spec Manager (default: {SPEC_MANAGER_MODEL})")
 
     args = parser.parse_args()
 
@@ -821,5 +1033,9 @@ if __name__ == "__main__":
         clarify_agent_model=args.clarify_model,
         answer_model=args.answer_model,
         code_gen_model=args.code_model,
-        skip_codegen=args.skip_codegen
+        skip_codegen=args.skip_codegen,
+        use_spec_manager=args.use_spec_manager,
+        spec_no_provenance=args.spec_no_provenance,
+        spec_extra_rounds=args.spec_extra_rounds,
+        spec_manager_model=args.spec_manager_model
     )

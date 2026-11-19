@@ -140,9 +140,26 @@ python probe_spec_fidelity.py \
 ## 5. 下一步 TODO（给接手的 agent）
 
 1. 在台式机上跑第 4 节的真实数据探针，拿到 underspec / conflict 分组的 dropped / unsupported / carryover 比率与 LLM 通道交叉验证；人工标注 ~100 条 details 给数值通道报 precision。
-2. 若缺陷率可观（预期 conflict 组 carryover 不低），开始设计 Spec Manager：
-   - 结构化 spec schema（feature 图：每个 feature 的参数、约束、来源标记）；
-   - 最小实现可以先不训模型：用 LLM 从 `original prompt + Q&A` 抽取结构化 spec，Clarifier 的问题由"未确认字段"驱动；
-   - 消融设计：JSON schema 无溯源版（证明"来源管理"本身的增益）、固定提问轮次预算版（排除"多问一轮"解释）。
-3. Verifier 实现为 spec-grounded：逐字段核对 code（可静态解析 CadQuery AST + 渲染图）与 spec，`assumed` 字段未确认 → 回灌 Clarifier 而非直接改代码。
-4. 评估指标：Chamfer（与 baseline 比）、事实丢失率（探针直接复用）、达到收敛的平均提问轮次、单轮预算下的成功率。
+2. ~~若缺陷率可观，开始设计 Spec Manager~~ **（最小实现已完成，2026-11-19）**：
+   - ✅ 结构化 spec schema（feature 图：参数、约束、四级溯源 `user-stated / answer-confirmed / agent-assumed / inferred`，单位归一化 mm）；
+   - ✅ LLM 抽取/更新（`config/spec_manager.py` prompts），但**溯源合并是确定性代码**（rank：answer-confirmed > user-stated > inferred > agent-assumed），LLM 输出经 `merge_specs` 防御性对账，所有覆写记入 `spec['resolutions']`；
+   - ✅ Clarifier 额外轮次只由"未确认字段"驱动（`unresolved_fields` → questions，LLM 失败时有确定性模板兜底）；
+   - ✅ 消融：`--spec-no-provenance`（同一 JSON schema 喂 Coder，但剥掉溯源、关闭主动提问轮次）；固定轮次预算用 `--spec-extra-rounds N` 控制（对照 baseline 需跑 N=0 vs N=1）。
+3. ~~Verifier 实现为 spec-grounded~~ **（确定性通道已完成，2026-11-19）**：
+   - ✅ `src/spec_verifier.py`：不执行代码、纯 AST 静态核对，三类裁决 V1 `CONFIRMED_VALUE_MISSING`（blocking）、V2 `UNSUPPORTED_LITERAL`（warning，已处理 radius/diameter 对偶与结构常数）、V3 `ASSUMED_FIELD_USED` → `build_reclarify_request` 回灌 Clarifier 而非改代码；
+   - ✅ LLM 语义通道 prompt（`config/spec_verification.py`，查特征类型/布尔操作/placement 等非数值事实），接口 `verify_with_llm`；
+   - ✅ 已接入 pipeline Step 5：`--use-spec-manager` 时每条结果存 `step5_verification`；
+   - ⬜ **未完成**：verifier 裁决触发的自动再澄清→再生成闭环（当前只产出 `reclarify_request`，需在 process_batch 里加最多一轮循环）；渲染图视觉通道。
+4. 评估指标（待真实数据跑）：Chamfer（baseline / spec+provenance / spec 无溯源 三组）、事实丢失率（探针直接对 `step3_spec` / Coder hand-off 文本复用）、达到收敛的平均提问轮次、单轮预算下的成功率。
+5. 确定性逻辑测试已就位（无需 API/GPU）：`python tests/test_spec_manager.py`（24 tests）、`python tests/test_spec_verifier.py`（10 tests）。
+
+### 已实现产物清单（2026-11-19）
+
+| 文件 | 内容 |
+|---|---|
+| `config/spec_manager.py` | Spec Manager 三个 prompt（抽取/更新/提问）与 schema、溯源规则 |
+| `src/spec_manager.py` | Spec 规范化、溯源秩合并、冲突检测、未决字段检测、Coder hand-off 渲染（含无溯源消融）、SpecManager LLM 封装 |
+| `config/spec_verification.py` | Verifier LLM 语义裁决 prompt |
+| `src/spec_verifier.py` | CadQuery AST 字面量抽取、V1/V2/V3 确定性核对、回灌 Clarifier 请求构造、LLM 通道接口 |
+| `pipeline.py` | `--use-spec-manager / --spec-no-provenance / --spec-extra-rounds / --spec-manager-model`；Step 3.5（抽取→合并→主动提问轮）与 Step 5（spec-grounded 验证）；Clarifier 原 standardized_prompt 保留在 `step3_clarifier_standardized_prompt` 供 A/B |
+| `tests/` | 34 个离线单测，覆盖 carryover/dropped/unsupported fixture、cm→mm、id 漂移、radius/diameter 对偶、误发明 fillet、语法错误等 |

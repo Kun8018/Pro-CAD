@@ -59,6 +59,7 @@ export OPENROUTER_API_KEY=sk-or-...
 | `CLARIFY_AGENT_MODEL` | Clarifier model id (`pipeline.py`) | `gpt-4o-mini-2024-07-18` |
 | `ANSWER_MODEL` | User-simulator model id (`pipeline.py`) | `gpt-5-mini-2025-08-07` |
 | `CODE_GEN_MODEL` | Coder model id or local path (`pipeline.py`) | `BBexist/ProCAD-coder` |
+| `SPEC_MANAGER_MODEL` | Spec Manager model id (`pipeline.py --use-spec-manager`) | `gpt-4o-mini-2024-07-18` |
 | `TOOLS_DIR` | Auxiliary tool path (`batch_label.py`) | `.` |
 
 ## Data
@@ -104,6 +105,35 @@ python probe_spec_fidelity.py --results_dir ./clarification_results
 python probe_spec_fidelity.py --results_dir ./clarification_results --with-llm
 ```
 
+### Spec Manager + spec-grounded Verifier (third-agent research track)
+
+`THIRD_AGENT_IDEA.md` documents the motivation and research design. In short: the Clarifier → Coder hand-off is a single free-text `standardized_prompt` — an information bottleneck with no execution-time feedback loop. Two additional agents address it:
+
+3. **Spec Manager** (`src/spec_manager.py`) — replaces the free-text hand-off with a structured feature graph where **every value carries provenance**: `user-stated`, `answer-confirmed`, `agent-assumed`, or `inferred`. Clarification answers override carried-over wrong values by provenance rank; extra question rounds are driven only by unresolved (missing/assumed) fields.
+4. **Spec-grounded Verifier** (`src/spec_verifier.py`) — aligns the generated CadQuery code back to the spec field by field via static AST analysis (no code execution, no GT mesh): dropped confirmed values, unsupported invented literals, and unconfirmed assumed values — the last are routed back to the Clarifier rather than patched in the code.
+
+```bash
+# full third-agent run (structured, provenance-tagged hand-off + verification)
+python pipeline.py \
+  --json_path dataset/selected_misleading_samples_test \
+  --output_dir ./clarification_results_spec \
+  --use-spec-manager
+
+# ablation: same JSON schema handed to the Coder, but provenance stripped and
+# no proactive question rounds ("structured prompt only")
+python pipeline.py \
+  --json_path dataset/selected_misleading_samples_test \
+  --output_dir ./clarification_results_spec_noprov \
+  --use-spec-manager --spec-no-provenance
+```
+
+Flags: `--use-spec-manager`, `--spec-no-provenance` (ablation), `--spec-extra-rounds N` (default 1), `--spec-manager-model`. Each result stores `step3_spec` (structured spec), `spec_resolutions` (machine-readable change log), `spec_unresolved_remaining`, and `step5_verification` (per-field verdicts + `reclarify_request`). The Clarifier's original `standardized_prompt` is preserved as `step3_clarifier_standardized_prompt` for A/B comparison. The deterministic logic (merge, provenance, unresolved detection, hand-off rendering, code verification) has 34 offline tests, no API key needed:
+
+```bash
+python tests/test_spec_manager.py
+python tests/test_spec_verifier.py
+```
+
 ## Training
 
 SFT uses [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory). See `training/README.md` for setup (install LLaMA-Factory, then copy the ProCAD data + configs from `training/`).
@@ -145,6 +175,8 @@ Released checkpoints: [**BBexist/ProCAD-coder**](https://huggingface.co/BBexist/
 | `direct_conflict_same_feature_two_values.py` | Few-shot examples — conflicting values |
 | `prompt_comparison.py` | GPT-based description comparison |
 | `prompt_verification.py` | Description ↔ code consistency check |
+| `spec_manager.py` | Spec Manager prompts: schema, provenance rules, extract/update/questions |
+| `spec_verification.py` | Spec-grounded Verifier LLM judge prompt (semantic channel) |
 | `prompts.py` | General CAD code-generation prompt |
 
 ### `src/`
@@ -152,6 +184,8 @@ Released checkpoints: [**BBexist/ProCAD-coder**](https://huggingface.co/BBexist/
 | File | Purpose |
 |---|---|
 | `ask_agent.py` | `AskAgent` — detects ambiguity, generates clarifying questions |
+| `spec_manager.py` | **Spec Manager** — structured, provenance-tagged feature graph; unresolved-field-driven questions; Coder hand-off rendering (with/without provenance ablation) |
+| `spec_verifier.py` | **Spec-grounded Verifier** — static AST check of CadQuery code against spec fields; routes unconfirmed defaults back to the Clarifier |
 | `inference.py` | Unified LLM wrapper (OpenAI-compatible API or local HF transformer) |
 | `evaluation.py` | Chamfer distance, judge F1/precision/recall for question quality |
 | `mesh_utils.py` | STL loading, point-cloud sampling, CadQuery → mesh |
