@@ -102,6 +102,46 @@ llamafactory-cli train examples/train_full/qwen2-5_full_sft.yaml
 llamafactory-cli train examples/train_full/qwen2-5_full_sft_misleading.yaml
 ```
 
+### Spec Manager SFT (`spec_manager_sft`)
+
+The Spec Manager is an LLM-backed agent with deterministic kernel logic
+(normalize/merge/unresolved live in `src/spec_manager.py` and are never
+trained). Only its three perception skills are distilled: spec extraction,
+Q&A incorporation, and unresolved-field questions. Full design and the
+evaluation protocol are in [`SPEC_MANAGER_TRAINING.md`](SPEC_MANAGER_TRAINING.md).
+
+Build teacher-distilled SFT data (labels pass through the deterministic
+kernel; teacher raw JSON is never used as a target; samples failing
+deterministic quality filters are dropped):
+
+```bash
+# from repo root, with config/config.yaml + OPENAI_API_KEY configured
+python to_sft_spec_manager.py \
+  --train_json dataset/selected_misleading_samples_train \
+  --improved_json dataset/improved.json \
+  --output training/data/spec_manager_sft.jsonl
+# sanity-check a small batch first: --max_samples 20
+```
+
+Register `spec_manager_sft` (already in `training/dataset_info.json`) and
+train:
+
+```bash
+# multi-GPU full-parameter (paper recipe)
+llamafactory-cli train examples/train_full/qwen2-5_full_sft_spec_manager.yaml
+
+# single 12GB GPU (RTX 3080): QLoRA
+llamafactory-cli train examples/train_full/qwen2-5_qlora_spec_manager.yaml
+```
+
+Run the pipeline with the local model (non-API model names auto-route to
+Hugging Face transformers in `src/inference.py`):
+
+```bash
+python pipeline.py --use-spec-manager \
+  --spec-manager-model saves/qwen2_5-7b/full/sft_spec_manager
+```
+
 ## Released checkpoints
 
 If you'd rather skip training and use our checkpoints:
