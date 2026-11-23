@@ -163,3 +163,7 @@ python probe_spec_fidelity.py \
 | `src/spec_verifier.py` | CadQuery AST 字面量抽取、V1/V2/V3 确定性核对、回灌 Clarifier 请求构造、LLM 通道接口 |
 | `pipeline.py` | `--use-spec-manager / --spec-no-provenance / --spec-extra-rounds / --spec-manager-model`；Step 3.5（抽取→合并→主动提问轮）与 Step 5（spec-grounded 验证）；Clarifier 原 standardized_prompt 保留在 `step3_clarifier_standardized_prompt` 供 A/B |
 | `tests/` | 34 个离线单测，覆盖 carryover/dropped/unsupported fixture、cm→mm、id 漂移、radius/diameter 对偶、误发明 fillet、语法错误等 |
+
+## 讨论
+
+multi agent
