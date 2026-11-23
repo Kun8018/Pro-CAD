@@ -98,6 +98,32 @@ class TestLiteralExtraction(unittest.TestCase):
         parsed = extract_code_literals("definitely not python (((")
         self.assertIsNotNone(parsed["parse_error"])
 
+    def test_variable_binding_resolves_in_call_context(self):
+        code = """
+import cadquery as cq
+L = 60
+W = 40
+T = 12
+result = cq.Workplane("XY").box(L, W, T)
+"""
+        parsed = extract_code_literals(code)
+        calls = {(v, c) for v, c, _ in parsed["literals"]}
+        self.assertIn((60.0, "box"), calls)
+        self.assertIn((40.0, "box"), calls)
+        self.assertIn((12.0, "box"), calls)
+
+    def test_reassigned_nonliteral_binding_is_not_resolved(self):
+        code = """
+import cadquery as cq
+r = 5
+r = some_computed_value()
+result = cq.Workplane("XY").circle(r)
+"""
+        parsed = extract_code_literals(code)
+        values = {v for v, _, _ in parsed["literals"]}
+        # r is no longer a literal after reassignment, so 5 must not leak in
+        self.assertNotIn(5.0, values)
+
 
 class TestVerification(unittest.TestCase):
 
@@ -161,6 +187,49 @@ class TestVerification(unittest.TestCase):
         spec["features"][1]["parameters"]["radius"]["unit"] = "cm"
         result = verify_code_against_spec(spec, GOOD_CODE)
         self.assertTrue(result["passed"], msg=str(result["issues"]))
+
+    def test_wrong_value_passed_via_variable_is_flagged(self):
+        code = """
+import cadquery as cq
+L = 60
+W = 40
+T = 12
+result = cq.Workplane("XY").box(L, W, T)
+"""
+        result = verify_code_against_spec(PLATE_SPEC, code)
+        missing = {i["param"] for i in result["issues"]
+                   if i["code"] == "CONFIRMED_VALUE_MISSING"}
+        self.assertIn("thickness", missing)
+        unsupported = [i for i in result["issues"]
+                       if i["code"] == "UNSUPPORTED_LITERAL"
+                       and i["literal_mm"] == 12.0]
+        self.assertEqual(len(unsupported), 1)
+
+    def test_v2_duality_restricted_to_radial_calls(self):
+        # spec plate length is 17 mm; code box length is 34 (= 2 * 17).
+        # `box` is a linear call, so 34 must be UNSUPPORTED, not grounded by
+        # the radius<->diameter duality (which only applies to radial calls).
+        # (34 is chosen because 30 is a structural angle and would be skipped.)
+        spec = {
+            "unit": "mm",
+            "features": [{
+                "id": "plate_1", "type": "plate", "operation": "add",
+                "parameters": {
+                    "length": _entry(17, USER_STATED, "mm"),
+                    "width": _entry(8, USER_STATED, "mm"),
+                    "thickness": _entry(2, USER_STATED, "mm"),
+                },
+                "placement": [],
+            }],
+            "constraints": [],
+        }
+        code = "import cadquery as cq\nresult = cq.Workplane('XY').box(34, 8, 2)"
+        result = verify_code_against_spec(spec, code)
+        unsupported = [i for i in result["issues"]
+                       if i["code"] == "UNSUPPORTED_LITERAL"
+                       and i["literal_mm"] == 34.0]
+        self.assertEqual(len(unsupported), 1)
+        self.assertFalse(result["passed"])  # length 17 is also missing
 
 
 if __name__ == "__main__":

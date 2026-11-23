@@ -341,7 +341,7 @@ def build_qa_text(result: Dict) -> str:
 
 
 def audit_llm(results: List[Dict], standardized_map: Dict[int, str],
-              model_name: str, batch_size: int) -> List[Optional[Dict]]:
+              model_name: str, batch_size: int) -> Dict[int, Optional[Dict]]:
     from src.inference import LLM
     from config.spec_fidelity_audit import (
         SPEC_FIDELITY_JUDGE_SYSTEM_PROMPT,
@@ -384,7 +384,20 @@ def audit_llm(results: List[Dict], standardized_map: Dict[int, str],
             out[i] = parsed
         except json.JSONDecodeError:
             out[i] = None
-    return [out.get(i) for i in range(len(results))]
+    # Keyed by the index into `results`, so the caller can align each audit to
+    # its row even though `rows` skips samples without a standardized prompt.
+    return out
+
+
+def attach_llm_audits(rows: List[Dict], result_indices: List[int],
+                      llm_audits: Dict[int, Optional[Dict]]) -> None:
+    """Attach per-result LLM audits to rows, aligned by the original result
+    index. ``rows`` is shorter than ``results`` (it skips no-standardized-prompt
+    samples), so a plain zip() would misalign the audits."""
+    for row, idx in zip(rows, result_indices):
+        audit = llm_audits.get(idx)
+        if audit is not None:
+            row["audit_llm"] = audit
 
 
 # ---------------------------------------------------------------------------
@@ -454,11 +467,13 @@ def main():
 
     rows = []
     standardized_map: Dict[int, str] = {}
+    result_indices: List[int] = []  # original results index for each row
     for i, r in enumerate(results):
         sp = extract_standardized_prompt(r)
         if sp is None:
             if args.include_skipped:
                 rows.append({"result": r, "audit": None, "config_name": r.get("config_name")})
+                result_indices.append(i)
             continue
         standardized_map[i] = sp
         audit = audit_numeric(r, sp)
@@ -470,18 +485,16 @@ def main():
             "standardized_prompt": sp,
             "audit": audit,
         })
+        result_indices.append(i)
 
     eligible = [row for row in rows if row.get("audit")]
     print(f"Audited samples (with standardized prompt): {len(eligible)}")
 
-    llm_audits: List[Optional[Dict]] = [None] * len(results)
     if args.with_llm and standardized_map:
         print(f"Running LLM judge: {args.judge_model}")
         llm_audits = audit_llm(results, standardized_map,
                                args.judge_model, args.batch_size)
-        for row, la in zip(rows, llm_audits):
-            if la is not None:
-                row["audit_llm"] = la
+        attach_llm_audits(rows, result_indices, llm_audits)
 
     os.makedirs(args.output_dir, exist_ok=True)
 

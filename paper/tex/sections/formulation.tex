@@ -1,0 +1,56 @@
+\section{Problem Formulation}\label{sec:formulation}
+
+\paragraph{Setting.}
+A user provides a description $x$ of a mechanical part. The description may
+be \emph{underspecified} (parameters missing) or \emph{conflicting} (the same
+feature given two incompatible values). A pipeline of agents must produce an
+executable CadQuery program $c$ whose rendered geometry realizes the user's
+intent, while spending at most a bounded number of clarification questions.
+
+\paragraph{ProCAD protocol.}
+We follow the ProCAD benchmark \cite{procad}. From a clean description
+$x^\mathrm{orig}$ with ground-truth program and mesh, misleading variants are
+synthesized at severity $K{\in}\{1,2,3\}$ by removing $K$ parameters
+(\texttt{underspec}) or introducing $K$ contradictory values
+(\texttt{conflict}). Each sample carries the ground-truth questions and
+answers. Evaluation compares three conditions on identical samples:
+$D_\mathrm{orig}$ (clean prompt, performance ceiling), $D_\mathrm{mis}$
+(misleading prompt without clarification, the single-agent baseline), and
+$D_\mathrm{clar}$ (misleading prompt after clarification), measured by
+Chamfer distance to the ground-truth mesh and program validity.
+
+\paragraph{Where the protocol is silent.}
+The protocol measures \emph{geometric similarity to ground truth}, which
+exists only offline. It says nothing about two deployment-time questions:
+(Q1)~does the text handed to the coder faithfully represent what the user
+stated and confirmed, and (Q2)~can the system itself detect failures without
+the reference mesh? We formalize both.
+
+\paragraph{Specification fidelity (Q1).}
+Let $\mathcal{F}$ be the set of geometric facts (feature, parameter, value)
+stated in the user's prompt or confirmed in clarification answers---the
+\emph{grounded information set}. Let $h$ be the hand-off object the coder
+receives. We distinguish three defect classes:
+\begin{itemize}
+  \item \textsc{Dropped}: a fact in $\mathcal{F}$ absent from $h$;
+  \item \textsc{Unsupported}: a dimensional value in $h$ with no support in
+  $\mathcal{F}$ (invented);
+  \item \textsc{Carryover}: a wrong value introduced by the misleading
+  prompt that survives into $h$ even though the correct value is in
+  $\mathcal{F}$.
+\end{itemize}
+For free-text hand-offs, $h$ is a string and membership is decided by
+fact-level audit; for our specification, both $\mathcal{F}$ and $h$ are
+structured and the comparison is deterministic. \S\ref{sec:evaluation:defect}
+reports defect rates per class and per severity.
+
+\paragraph{Fidelity vs.\ similarity (Q2).}
+We separate \emph{specification fidelity}---does program $c$ realize the
+specification $s$ the user confirmed?---from \emph{geometric similarity}---
+does the rendered geometry resemble a reference mesh? Similarity requires
+ground truth and is measurable only offline; fidelity is decidable from
+$(s,c)$ alone, hence at every run. The empirical claim this paper must defend
+is that fidelity is a \emph{useful proxy}: interventions that raise fidelity
+should raise similarity on the benchmark, and fidelity failures should
+predict similarity failures. The evaluation
+(\S\ref{sec:evaluation}) tests both directions.

@@ -1,0 +1,110 @@
+%% Spec Manager paper — SIGGRAPH / ACM TOG submission draft.
+%% Build: latexmk -pdf main.tex
+%%
+%% Submission format: [acmtog,review,anonymous]. For camera-ready switch to
+%% \documentclass[acmtog]{acmart}. For a quick conference-style preview use
+%% [manuscript,screen,review]{acmart} as suggested by the acmart sample.
+
+\RequirePackage{xurl} % breakable URLs; must load before acmart's hyperref
+\documentclass[acmtog,review,anonymous]{acmart}
+
+%% ------------------------------------------------------------------ %%
+%% Markers for unfinished content. Every \RESULT must be replaced by an
+%% experiment-produced number before any draft leaves the repo.
+\newcommand{\TODO}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\RESULT}[1]{\textcolor{red}{[RESULT: #1]}}
+%% ------------------------------------------------------------------ %%
+
+\usepackage{booktabs}
+\usepackage{xcolor}
+
+%% ------------------------------------------------------------------ %%
+%% Overfull \hbox control. acmart already loads microtype; the two knobs
+%% below let TeX relax a line by a little interword stretch instead of
+%% pushing a long, unbreakable term past the column edge. This is NOT
+%% \sloppy -- justification stays tight everywhere else.
+\emergencystretch=2em
+\hyphenation{
+  un-der-spe-ci-fi-ca-tion
+  un-der-spe-ci-fied
+  Con-firmed-Value-Miss-ing
+  Un-sup-por-ted-Lit-er-al
+}
+
+%TC:beginignore
+\AtBeginDocument{%
+  \providecommand\BibTeX{{Bib\TeX}}}
+%TC:endignore
+
+%% CCS concepts: generate the authoritative strings with the ACM tool at
+%% https://dl.acm.org/ccs before submission; these are provisional.
+\ccsdesc[500]{Computing methodologies~Shape modeling}
+\ccsdesc[300]{Computing methodologies~Natural language generation}
+\ccsdesc[300]{Computing methodologies~Software verification and validation}
+\ccsdesc[100]{Human-centered computing~Interactive systems and tools}
+
+%% Authors: anonymized for review. Fill from the migration repo metadata.
+\author{Anonymous Author(s)}
+\affiliation{\institution{Anonymous Institution}\city{}\country{}}
+
+\begin{document}
+
+\title{Grounded Before Drawn: Provenance-Tracked Specifications and
+  Ground-Truth-Free Verification for Text-to-CAD Agents}
+
+\begin{abstract}
+Proactive clarification has recently entered text-to-CAD pipelines: a
+clarifier detects underspecified or conflicting prompts and asks questions
+before a coder generates executable CAD programs. Yet these pipelines still
+rely on a single free-text handoff between agents, with no explicit
+mechanism to trace information lost or assumptions introduced during the
+process. We introduce a \emph{Spec Manager} that replaces this handoff with
+a provenance-tracked design specification: a graph of features, parameters,
+and constraints in which every value is attributed to the user's prompt, a
+clarification answer, a system assumption, or a derived constraint. A
+deterministic kernel governs specification updates, applies explicit
+conflict policies, and detects unresolved fields, making specification
+invariants auditable and unit-testable without an API call.
+
+We further introduce a two-channel, spec-grounded verifier that checks
+generated programs against the specification without requiring
+ground-truth geometry at inference time. Its static channel parses the
+program, maps CAD operations and parameters to specification fields, and
+checks confirmed values and parameter provenance; mappings it cannot
+establish reliably are reported as uncertain rather than silently passed.
+Its dynamic channel measures the executed B-rep---including dimensions,
+radii, depths, and feature counts---to detect geometric violations that
+static analysis cannot establish. Verification outcomes trigger targeted
+responses: unresolved assumptions are returned to the user as clarification
+questions, while confirmed requirements omitted or violated by the coder
+trigger diagnostic-grounded regeneration.
+
+On a controlled recreation of the ProCAD misleading-prompt benchmark,
+free-text handoffs exhibit information defects in \RESULT{C1 defect rate}
+of clarified samples. Our specification pipeline reduces this rate to
+\RESULT{C2 defect rate}, improves mean Chamfer distance from
+\RESULT{baseline CD} to \RESULT{our CD} under equal or smaller question
+budgets, and predicts ground-truth geometric failures with
+\RESULT{precision/recall}. We also show that the Spec Manager can be
+distilled into Qwen2.5-7B with kernel-canonicalized labels. Together,
+these results provide evidence that specification fidelity is a measurable
+inference-time signal for geometric correctness, while ground-truth metrics
+remain an offline evaluation tool.
+\end{abstract}
+
+\keywords{text-to-CAD, multi-agent systems, design specification, provenance,
+program verification, Clarifier--Coder pipelines}
+
+\maketitle
+
+\input{sections/introduction}
+\input{sections/related}
+\input{sections/formulation}
+\input{sections/method}
+\input{sections/evaluation}
+\input{sections/discussion}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}

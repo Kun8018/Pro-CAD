@@ -1,0 +1,66 @@
+\section{Discussion and Conclusion}\label{sec:discussion}
+
+\paragraph{Fidelity as a deployable signal.}
+The paper's central empirical wager is that specification fidelity---cheap,
+deterministic, and measurable on every run---tracks geometric correctness
+closely enough to drive closed-loop intervention. The results above test the
+wager in both directions: defect-reduction interventions improve
+ground-truth metrics, and verifier verdicts predict geometric failures
+without seeing any reference mesh.
+
+\paragraph{Complementary interfaces.}
+Treellis demonstrates the value of exposing editable structure to humans;
+our specification is the agent-side counterpart, built before generation and
+verified after it. The two compose naturally: a provenance-tagged
+specification field is an ideal anchor for selecting the corresponding
+subtree in an editable assembly view, and we view intent-level provenance
+plus structure-level editing as the full-stack answer to the
+``regenerate-everything'' pathology.
+
+\paragraph{Honest boundaries.}
+The verifier's reach ends where stated intent ends: unstated errors,
+wrong topology never discussed with the user, and semantics beyond the
+feature vocabulary remain the province of offline similarity metrics and,
+eventually, human inspection. Under lawful non-uniqueness (underspecified
+prompts with many valid resolutions), dataset-grounded Chamfer penalizes
+valid confirmations; we therefore separate dataset-referenced scores from
+specification-referenced ones rather than average over both.
+
+\paragraph{On the number of agents.}
+\label{sec:discussion:agents}
+Our system has three agents---Clarifier, Spec Manager, and Coder---plus a
+deterministic verifier that is a \emph{tool}, not an agent: it has no LLM, no
+objectives, and no action choice. We deliberately stop at three. The
+Clarifier and Coder are inherited from ProCAD and carry well-understood,
+separately trained responsibilities; the Spec Manager is the single new
+agent because it is the one component that genuinely needs state and
+user-facing decisions---what to ask, which value to trust, where to route a
+failure. The verifier stays a tool for a principled reason: a
+specification--program checker is a total function, and naming it an agent
+would invite exactly the ``multi-agent as prompt engineering'' criticism
+that undermines the method's claim to verifiability. CADDesigner achieves a
+comparable feature set inside one general-purpose agent \cite{caddesigner};
+our ablation- and unit-test-friendly decomposition is an alternative whose
+trade-off---more components, each with a smaller, mechanically checkable
+contract---we argue is the right one when correctness, not fluency, is the
+requirement. Three agents are also not a floor: a natural collapse is that
+the Clarifier is eventually absorbed into the Spec Manager, whose
+unresolved-field machinery already subsumes question asking, leaving a
+two-agent system with the same guarantees. We leave that consolidation to
+future work and report the three-agent form here because it isolates the
+Spec Manager's contribution against the ProCAD baseline cleanly.
+
+\paragraph{Conclusion.}
+We replaced the last free-text hand-off in clarify-then-generate text-to-CAD
+pipelines with a provenance-tracked specification governed by a deterministic
+kernel, and grounded verification in what the user actually confirmed rather
+than in ground-truth geometry or unanchored self-inspection. Information
+loss, invention, and carried-over errors---invisible in free-text
+pipelines---become measurable, preventable, and repairable at deployment
+time, at question budgets matched to baselines, and reproducible on open
+7B models throughout.
+
+\paragraph{Reproducibility.}
+All code (pipeline, deterministic kernel with offline unit tests, verifier,
+distillation, and analysis scripts) and the SFT recipe are released; the
+evaluation reuses the public ProCAD dataset and checkpoints.

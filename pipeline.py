@@ -206,8 +206,10 @@ class ParallelClarificationPipeline:
                 and its rendering REPLACES the Clarifier's standardized_prompt
                 as the Coder hand-off. See THIRD_AGENT_IDEA.md.
             spec_no_provenance: Ablation. Same JSON schema, but source tags are
-                stripped from the Coder hand-off and no extra unresolved-field-
-                driven question rounds are run ("structured prompt only").
+                stripped from the Coder hand-off ("structure without
+                provenance", E4). Decoupled from the question budget: extra
+                rounds are still driven by the internal spec and controlled by
+                spec_extra_rounds.
             spec_extra_rounds: Max extra clarification rounds the Spec Manager
                 may trigger for unresolved (missing/agent-assumed) fields.
             spec_manager_model: Model backing the Spec Manager (API model).
@@ -235,8 +237,10 @@ class ParallelClarificationPipeline:
         # Spec Manager (third agent) — lazily initialized only when enabled
         self.use_spec_manager = use_spec_manager
         self.spec_no_provenance = spec_no_provenance
-        # The no-provenance ablation removes proactive question rounds.
-        self.spec_extra_rounds = 0 if spec_no_provenance else spec_extra_rounds
+        # Decoupled: spec_no_provenance only strips source tags from the Coder
+        # hand-off (E4 ablation). The extra-round question budget is an
+        # independent axis controlled by spec_extra_rounds alone (E2/E3/E4).
+        self.spec_extra_rounds = spec_extra_rounds
         self.spec_manager_model = spec_manager_model or SPEC_MANAGER_MODEL
         self._spec_manager = None
         if use_spec_manager:
@@ -510,21 +514,51 @@ class ParallelClarificationPipeline:
                     results[orig_idx]["evaluation"] = eval_result
 
         # Step 5 (optional): spec-grounded verification of the generated code.
-        # Runs without executing code / GT mesh; failures are stored together
-        # with a re-clarification request routed back to the Clarifier.
+        # Two channels: L1 (static AST, no execution) + L2 (dynamic B-rep, only
+        # when code was actually generated). Failures are stored together with a
+        # routing decision (regenerate vs re-clarify) and a field-level
+        # regeneration diagnostic.
         if self.use_spec_manager and active_indices:
             from src.spec_verifier import (
                 verify_code_against_spec, build_reclarify_request,
+            )
+            from src.spec_verifier_l2 import (
+                verify_b_rep_against_spec, measure_b_rep,
+            )
+            from src.spec_loop import (
+                route, build_regeneration_diagnostic,
             )
             for i in active_indices:
                 spec = results[i].get("step3_spec")
                 code = results[i].get("step4_code_extracted")
                 if not spec or not code:
                     continue
-                verification = verify_code_against_spec(spec, code)
-                verification["reclarify_request"] = build_reclarify_request(
-                    verification)
-                results[i]["step5_verification"] = verification
+
+                l1 = verify_code_against_spec(spec, code)
+                l1["channel"] = "l1"
+                l1["reclarify_request"] = build_reclarify_request(l1)
+
+                # L2 executes the code; only meaningful when codegen ran.
+                l2_measurements = measure_b_rep(code)
+                l2 = verify_b_rep_against_spec(spec, l2_measurements)
+                l2["channel"] = "l2"
+
+                combined_issues = l1["issues"] + l2["issues"]
+                combined = {
+                    "passed": bool(l1["passed"]) and l2["passed"] is not False,
+                    "issues": combined_issues,
+                    "assumed_to_reclarify": l1["assumed_to_reclarify"],
+                    "channel": "l1+l2",
+                    "reclarify_request": l1["reclarify_request"],
+                    "l2_measurements": l2_measurements,
+                }
+                combined["route"] = route(combined)
+                combined["regeneration_diagnostic"] = \
+                    build_regeneration_diagnostic(combined, code)
+
+                results[i]["step5_verification"] = combined
+                results[i]["step5_verification_l1"] = l1
+                results[i]["step5_verification_l2"] = l2
         
         # Set evaluation_original and evaluation_misleading from JSON
         for i, result in enumerate(results):
@@ -557,8 +591,8 @@ class ParallelClarificationPipeline:
         2. Merge the round-1 Clarifier Q&A answers (provenance-ranked;
            answer-confirmed overrides carried-over wrong user-stated values).
         3. Up to spec_extra_rounds additional rounds driven ONLY by unresolved
-           fields (missing / agent-assumed). Disabled in the no-provenance
-           ablation.
+           fields (missing / agent-assumed). Independent of provenance
+           stripping (spec_no_provenance), which only affects the hand-off.
         4. Render the spec as the Coder hand-off, replacing _standardized_prompt.
 
         Every artifact is stored on the result dict: step3_spec,
@@ -808,7 +842,7 @@ def process_all_misleading_samples_parallel(
             print(f"  Code Gen: {code_gen_model or CODE_GEN_MODEL}")
         if use_spec_manager:
             print(f"  Spec Manager: enabled, provenance={not spec_no_provenance}, "
-                  f"extra_rounds={0 if spec_no_provenance else spec_extra_rounds}, "
+                  f"extra_rounds={spec_extra_rounds}, "
                   f"model={spec_manager_model or SPEC_MANAGER_MODEL}")
 
     # Initialize pipeline
@@ -1011,9 +1045,9 @@ if __name__ == "__main__":
                             "provenance-tagged spec from prompt + Q&A and its rendering "
                             "replaces the Clarifier's standardized_prompt as the Coder hand-off.")
     parser.add_argument("--spec-no-provenance", action="store_true",
-                       help="Ablation: same structured JSON schema handed to the Coder, but "
-                            "source tags stripped and no unresolved-field question rounds. "
-                            "Isolates the gain of provenance/active behaviour from the schema.")
+                       help="Ablation (E4): same structured JSON schema handed to the Coder, "
+                            "but source tags stripped from the hand-off. Decoupled from "
+                            "--spec-extra-rounds, which still controls the question budget.")
     parser.add_argument("--spec-extra-rounds", type=int, default=1,
                        help="Max extra clarification rounds the Spec Manager may trigger "
                             "for unresolved fields (default: 1; 0 disables).")

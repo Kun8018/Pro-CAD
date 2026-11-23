@@ -1,0 +1,89 @@
+\section{Evaluation}\label{sec:evaluation}
+
+The evaluation answers five questions. (E1)~Do free-text hand-offs lose
+information measurably? (E2)~Does the provenance specification reduce those
+defects, and does reducing them improve geometry? (E3)~Is the
+deployment-time verifier a valid proxy for ground-truth geometric failure?
+(E4)~Does the closed loop win at equal question budgets? (E5)~Does the
+pipeline survive imperfect users and an open 7B Spec Manager?
+
+\subsection{Setup}\label{sec:evaluation:setup}
+
+\paragraph{Benchmark.}
+We recreate the ProCAD benchmark: misleading variants at severity
+$K{\in}\{1,2,3\}$ for both families (\texttt{underspec},
+\texttt{conflict}), plus clean samples ($K{=}0$), each with
+ground-truth questions, answers, program, and mesh.
+\TODO{state sample counts per family and severity; confirm that baseline
+numbers reproduce the released ProCAD checkpoints under our evaluation
+settings; specify the question-budget accounting (what counts as a
+question, per system); state that all systems are compared on identical
+samples with identical Chamfer settings (8192 points, normalization,
+thresholds).}
+
+\paragraph{Systems.}
+All systems share the same coder and test split; only the pre-code stages
+differ:
+\begin{itemize}\setlength\itemsep{0.1em}
+  \item[\textbf{E0}] single coder, misleading prompt (single-agent baseline);
+  \item[\textbf{E1}] ProCAD clarification, one round (original pipeline);
+  \item[\textbf{E2}] Spec Manager, no verification loop, one unconditional
+  extra question round (budget-matched control);
+  \item[\textbf{E3}] full closed loop (verifier-triggered re-clarification /
+  re-generation);
+  \item[\textbf{E4}] E3 with provenance tags stripped (ablation:
+  structure without provenance);
+  \item[\textbf{E5}] E3 with the distilled Qwen2.5-7B Spec Manager replacing
+  the teacher.
+\end{itemize}
+
+\paragraph{User conditions.}
+Oracle (answers from ground truth, the original protocol), \emph{novice}
+(approximate values, partial answers), and \emph{confused} (wrong values
+confidently stated). The latter two use the ProCAD persona machinery on the
+answering side, exposing the oracle assumption the original evaluation makes.
+
+\paragraph{Metrics.}
+Geometry: Chamfer distance (8192-point, normalized, the original protocol),
+normal consistency (NC), edge Chamfer distance (ECD) \cite{cadfs}, volume
+IoU, and program validity with failure-type classification (compile /
+geometry / success). Defects: per-class rates of \textsc{Dropped},
+\textsc{Unsupported}, \textsc{Carryover} (\S\ref{sec:formulation}) via a
+deterministic numeric channel cross-checked by a fact-level LLM audit.
+Interaction: questions and LLM calls per sample. Proxy validity:
+precision\slash recall of verifier verdicts against a Chamfer failure threshold,
+with a \RESULT{N}-sample human-labeled gold set for calibration.
+
+\subsection{Results}\label{sec:evaluation:defect}
+
+\paragraph{Hand-off defects exist and correlate with geometry.}
+\RESULT{Table: defect rates per class and per $K$/family for E1 vs.\ E2/E3;
+mean Chamfer of defective vs.\ clean samples.}
+
+\paragraph{Provenance reduces defects and improves geometry.}
+\RESULT{Table: E0--E5 $\times$ $\{$CD, NC, ECD, IoU, validity$\}$; the
+four-quadrant report (spec-fail\slash CD-bad etc.) with the honest third quadrant.}
+
+\paragraph{The verifier is a valid proxy.}
+\RESULT{Table: verdict precision\slash recall vs.\ Chamfer-thresholded failure;
+L1-only vs.\ L1+L2; the L2 contribution on the ``value-correct,
+operation-wrong'' subset.}
+
+\paragraph{Equal-budget comparison.}
+\RESULT{Table: E3 vs.\ E2 at matched question budgets; questions-per-sample
+distribution.}
+
+\paragraph{Imperfect users and the open model.}
+\RESULT{Table: oracle\slash novice\slash confused $\times$ $\{$E1, E3$\}$; E5 vs.\ E3
+teacher-student gap; cost per sample.}
+
+\subsection{Limitations}\label{sec:evaluation:limits}
+
+The specification covers stated intent only; errors outside it (wrong global
+topology the user never described) are invisible to the verifier and must
+still be caught by similarity metrics offline. The feature-type vocabulary
+bounds what the schema can express. On underspecified samples where the user
+lawfully confirms values that differ from dataset ground truth, Chamfer
+against the dataset mesh is not the right yardstick; we report
+specification-grounded references for these cases
+(\S\ref{sec:discussion}).

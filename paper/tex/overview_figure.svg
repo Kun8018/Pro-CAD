@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1320" viewBox="0 0 2400 1320">
+<defs>
+ <marker id="arr" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#48566b"/></marker>
+ <marker id="bluearr" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#2878b5"/></marker>
+ <marker id="greenarr" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#46966b"/></marker>
+ <marker id="redarr" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#c45b55"/></marker>
+ <style>
+ .title{font:700 36px Arial,sans-serif;fill:#182638}.section{font:700 25px Arial,sans-serif;fill:#24364b}.head{font:700 21px Arial,sans-serif;fill:#24364b}.body{font:18px Arial,sans-serif;fill:#34465b}.small{font:16px Arial,sans-serif;fill:#42536a}.tiny{font:14px Arial,sans-serif;fill:#53647a}.mono{font:16px 'Courier New',monospace;fill:#263748}.bold{font-weight:700}.frame{stroke-width:2.5;rx:20;ry:20}.card{stroke-width:1.8;rx:13;ry:13}.arrow{fill:none;stroke:#48566b;stroke-width:3;marker-end:url(#arr)}.feedback{fill:none;stroke-width:3.5;stroke-dasharray:11 8}
+ </style>
+</defs>
+<rect width="2400" height="1320" fill="#fff"/>
+<text x="1200" y="58" text-anchor="middle" class="title">ProCAD+: Provenance-Aware Specification Management and Closed-Loop CAD Verification</text>
+<text x="1200" y="91" text-anchor="middle" class="small">Clarify design intent → maintain an auditable feature specification → generate and verify executable geometry</text>
+
+<!-- Main stage containers -->
+<rect x="36" y="125" width="665" height="815" class="frame" fill="#f7faff" stroke="#78a2c8"/>
+<rect x="720" y="125" width="690" height="815" class="frame" fill="#fffaf2" stroke="#d8aa65"/>
+<rect x="1429" y="125" width="935" height="815" class="frame" fill="#f8f8fc" stroke="#8d91bb"/>
+<text x="65" y="167" class="section">I. Clarification &amp; Specification State</text>
+<text x="750" y="167" class="section">II. CAD Generation &amp; Execution</text>
+<text x="1460" y="167" class="section">III. Spec-Grounded Verification</text>
+
+<!-- User prompt -->
+<rect x="70" y="205" width="270" height="190" class="card" fill="#fff" stroke="#a8b7c8"/>
+<rect x="70" y="205" width="270" height="42" rx="13" fill="#e9eff6" stroke="#a8b7c8" stroke-width="1.5"/>
+<text x="205" y="233" text-anchor="middle" class="head">User prompt</text>
+<text x="91" y="279" class="body">“A 100 × 40 mm plate,</text><text x="91" y="306" class="body">10 mm thick, with a</text><text x="91" y="333" class="body">centered hole. Use a</text><text x="91" y="360" class="body">5 mm radius.”</text>
+<text x="91" y="382" class="tiny">Natural language + stated values</text>
+
+<!-- Clarifier -->
+<rect x="390" y="205" width="270" height="190" class="card" fill="#edf6fc" stroke="#65a0ca"/>
+<text x="525" y="242" text-anchor="middle" class="head">Clarifier</text>
+<circle cx="425" cy="280" r="5" fill="#367eaf"/><text x="442" y="286" class="body">Detect ambiguity/conflict</text>
+<circle cx="425" cy="316" r="5" fill="#367eaf"/><text x="442" y="322" class="body">Ask targeted question</text>
+<circle cx="425" cy="352" r="5" fill="#367eaf"/><text x="442" y="358" class="body">Record answer + turn</text>
+<path d="M340 300H380" class="arrow"/>
+
+<!-- Q&A card -->
+<rect x="70" y="430" width="590" height="115" class="card" fill="#fff" stroke="#93b6d2"/>
+<text x="95" y="463" class="head">Clarification exchange</text>
+<text x="95" y="495" class="small"><tspan class="bold">Clarifier:</tspan> “Should the hole pass through the full thickness?”</text>
+<text x="95" y="523" class="small"><tspan class="bold">User:</tspan> “Yes, it is a through-hole.”</text>
+<path d="M525 395V416H570V420" fill="none" stroke="#2878b5" stroke-width="2.5" marker-end="url(#bluearr)"/>
+
+<!-- Spec manager -->
+<rect x="70" y="585" width="590" height="315" class="card" fill="#eff8f1" stroke="#69a77d"/>
+<text x="95" y="622" class="head">Spec Manager: feature graph + field provenance</text>
+<text x="95" y="653" class="small">Resolved intent is stored as typed features, constraints, and sources.</text>
+<!-- graph boxes -->
+<rect x="105" y="685" width="190" height="82" rx="12" fill="#fff" stroke="#72a885" stroke-width="2"/>
+<text x="200" y="714" text-anchor="middle" class="head">Base plate</text><text x="200" y="741" text-anchor="middle" class="small">L=100 · W=40 · T=10</text>
+<rect x="430" y="685" width="190" height="82" rx="12" fill="#fff" stroke="#72a885" stroke-width="2"/>
+<text x="525" y="714" text-anchor="middle" class="head">Hole feature</text><text x="525" y="741" text-anchor="middle" class="small">Ø=10 · center · through</text>
+<line x1="295" y1="726" x2="430" y2="726" stroke="#69a77d" stroke-width="2.5"/><text x="362" y="711" text-anchor="middle" class="tiny">cut from</text>
+<!-- provenance chips -->
+<text x="105" y="800" class="small bold">Field-level provenance</text>
+<rect x="105" y="817" width="130" height="35" rx="16" fill="#dcecf8"/><text x="170" y="840" text-anchor="middle" class="tiny">user-stated</text>
+<rect x="245" y="817" width="150" height="35" rx="16" fill="#e2f2e6"/><text x="320" y="840" text-anchor="middle" class="tiny">answer-confirmed</text>
+<rect x="405" y="817" width="130" height="35" rx="16" fill="#fff0d9"/><text x="470" y="840" text-anchor="middle" class="tiny">agent-assumed</text>
+<rect x="545" y="817" width="95" height="35" rx="16" fill="#eee8f7"/><text x="592" y="840" text-anchor="middle" class="tiny">inferred</text>
+<path d="M365 545V575" class="arrow"/>
+
+<!-- coder -->
+<rect x="755" y="230" width="255" height="150" class="card" fill="#fff1d9" stroke="#d8a452"/>
+<text x="882" y="270" text-anchor="middle" class="head">CAD Coder</text>
+<text x="882" y="306" text-anchor="middle" class="body">Consumes resolved spec</text><text x="882" y="334" text-anchor="middle" class="body">Generates CadQuery code</text><text x="882" y="360" text-anchor="middle" class="tiny">Spec fields remain traceable</text>
+<path d="M660 730H700V305H745" fill="none" stroke="#48566b" stroke-width="3" marker-end="url(#arr)"/>
+
+<!-- code snippet -->
+<rect x="755" y="420" width="590" height="270" class="card" fill="#fff" stroke="#d2b27f"/>
+<rect x="755" y="420" width="590" height="42" rx="13" fill="#f8e9c9" stroke="#d2b27f" stroke-width="1.5"/>
+<text x="1050" y="448" text-anchor="middle" class="head">Generated CadQuery program</text>
+<text x="785" y="500" class="mono">base = cq.Workplane("XY").box(100, 40, 10)</text>
+<text x="785" y="536" class="mono">part = base.faces(">Z").workplane()</text>
+<text x="785" y="572" class="mono">part = part.hole(10)</text>
+<text x="785" y="608" class="mono">result = part</text>
+<text x="785" y="659" class="tiny">Code locations and data flow are linked to spec feature IDs.</text>
+<path d="M882 380V410" class="arrow"/>
+
+<!-- execution -->
+<rect x="755" y="735" width="255" height="150" class="card" fill="#f2f0fb" stroke="#9387bd"/>
+<text x="882" y="775" text-anchor="middle" class="head">Safe execution</text>
+<text x="882" y="811" text-anchor="middle" class="body">Run CAD program</text><text x="882" y="839" text-anchor="middle" class="body">Compile / kernel checks</text><text x="882" y="866" text-anchor="middle" class="tiny">Create B-rep solid</text>
+<path d="M1050 690V725" class="arrow"/>
+
+<!-- B-rep model icon -->
+<rect x="1050" y="735" width="295" height="150" class="card" fill="#f2f0fb" stroke="#9387bd"/>
+<text x="1197" y="775" text-anchor="middle" class="head">Rendered B-rep</text>
+<!-- isometric box -->
+<polygon points="1136,815 1200,790 1262,817 1198,842" fill="#b5c7cb" stroke="#62777c" stroke-width="2"/>
+<polygon points="1136,815 1198,842 1198,870 1136,842" fill="#789196" stroke="#62777c" stroke-width="2"/>
+<polygon points="1198,842 1262,817 1262,845 1198,870" fill="#91a9ae" stroke="#62777c" stroke-width="2"/>
+<ellipse cx="1198" cy="818" rx="12" ry="6" fill="#f2f0fb" stroke="#62777c" stroke-width="2"/>
+<path d="M1010 810H1040" class="arrow"/>
+
+<!-- Verifier internals -->
+<rect x="1460" y="205" width="405" height="300" class="card" fill="#eef2fb" stroke="#8291bc"/>
+<text x="1662" y="246" text-anchor="middle" class="head">A. AST + provenance audit</text>
+<text x="1490" y="282" class="small">• Resolve literals, variables, and expressions</text>
+<text x="1490" y="313" class="small">• Map CAD API calls to feature semantics</text>
+<text x="1490" y="344" class="small">• Check confirmed values and constraints</text>
+<text x="1490" y="375" class="small">• Flag unsupported / assumed parameters</text>
+<line x1="1490" y1="397" x2="1835" y2="397" stroke="#c3cbe0" stroke-width="1.5"/>
+<text x="1490" y="426" class="tiny">Examples: missing confirmed value; unexpected</text><text x="1490" y="449" class="tiny">feature; uncertain code-to-spec mapping.</text>
+<rect x="1490" y="463" width="345" height="25" rx="12" fill="#dce7f8"/><text x="1662" y="481" text-anchor="middle" class="tiny">Evidence: code span + spec field provenance</text>
+
+<rect x="1890" y="205" width="435" height="300" class="card" fill="#f0f7f4" stroke="#77a890"/>
+<text x="2107" y="246" text-anchor="middle" class="head">B. B-rep geometry audit</text>
+<text x="1920" y="282" class="small">• Measure extents and feature dimensions</text>
+<text x="1920" y="313" class="small">• Inspect hole count, axis, depth, position</text>
+<text x="1920" y="344" class="small">• Check solid validity and topology</text>
+<text x="1920" y="375" class="small">• Compare measurements to tolerances</text>
+<line x1="1920" y1="397" x2="2295" y2="397" stroke="#c3d8ce" stroke-width="1.5"/>
+<text x="1920" y="426" class="tiny">Uses executed shape properties, independent</text><text x="1920" y="449" class="tiny">of a ground-truth mesh at inference time.</text>
+<rect x="1920" y="463" width="375" height="25" rx="12" fill="#dcefe5"/><text x="2107" y="481" text-anchor="middle" class="tiny">Evidence: measured geometry + tolerance</text>
+
+<path d="M1345 560H1385V355H1450" fill="none" stroke="#48566b" stroke-width="3" marker-end="url(#arr)"/>
+<path d="M1345 810H1385V355" fill="none" stroke="#48566b" stroke-width="3"/>
+<path d="M1865 355H1880" class="arrow"/>
+
+<!-- decision -->
+<polygon points="1890,560 2105,560 2175,620 2105,680 1890,680 1820,620" fill="#fff" stroke="#7c88aa" stroke-width="2.5"/>
+<text x="1997" y="610" text-anchor="middle" class="head">Issue triage</text><text x="1997" y="640" text-anchor="middle" class="small">Evidence + provenance</text>
+<path d="M2107 505V540" class="arrow"/><path d="M1662 505V535H1820V600" fill="none" stroke="#48566b" stroke-width="3" marker-end="url(#arr)"/>
+
+<!-- issue cards bottom -->
+<rect x="70" y="1000" width="700" height="220" class="card" fill="#f2f8fd" stroke="#6c9fc5"/>
+<text x="100" y="1043" class="head" fill="#236b9d">V1 · Confirmed requirement missing / violated</text>
+<text x="100" y="1080" class="body">AST or B-rep evidence contradicts a user-stated or</text><text x="100" y="1108" class="body">answer-confirmed field. Return a targeted code repair.</text>
+<rect x="100" y="1144" width="260" height="42" rx="18" fill="#dcecf8"/><text x="230" y="1172" text-anchor="middle" class="small">Route → Coder</text>
+
+<rect x="850" y="1000" width="700" height="220" class="card" fill="#fff8ed" stroke="#d5a258"/>
+<text x="880" y="1043" class="head" fill="#9c651e">V2 · Unsupported feature / assumption</text>
+<text x="880" y="1080" class="body">Code adds an ungrounded operation or uses an assumed</text><text x="880" y="1108" class="body">value. Request repair or confirmation by provenance policy.</text>
+<rect x="880" y="1144" width="310" height="42" rx="18" fill="#ffedcf"/><text x="1035" y="1172" text-anchor="middle" class="small">Route → Coder / Spec Manager</text>
+
+<rect x="1630" y="1000" width="700" height="220" class="card" fill="#fff3f2" stroke="#d28a83"/>
+<text x="1660" y="1043" class="head" fill="#a84943">V3 · Spec ambiguity / unresolved intent</text>
+<text x="1660" y="1080" class="body">The spec lacks a required choice or cannot resolve conflicting</text><text x="1660" y="1108" class="body">evidence. Ask the user; then update provenance and regenerate.</text>
+<rect x="1660" y="1144" width="270" height="42" rx="18" fill="#f9dfdc"/><text x="1795" y="1172" text-anchor="middle" class="small">Route → User / Clarifier</text>
+
+<!-- decision routing lines -->
+<path d="M1890 650V735H420V990" class="feedback" stroke="#2878b5" marker-end="url(#bluearr)"/>
+<path d="M1997 680V790H1200V990" class="feedback" stroke="#c78c31" marker-end="url(#arr)"/>
+<path d="M2105 650H2310V955H1980V990" class="feedback" stroke="#c45b55" marker-end="url(#redarr)"/>
+<!-- Return loops labels -->
+<text x="540" y="766" class="small" fill="#2878b5">V1 repair loop</text>
+<text x="1260" y="820" class="small" fill="#a87525">V2 policy-dependent repair / confirm</text>
+<text x="2130" y="925" class="small" fill="#b24c46">V3 clarification loop</text>
+
+<!-- footer legend -->
+<line x1="70" y1="1270" x2="130" y2="1270" stroke="#48566b" stroke-width="3" marker-end="url(#arr)"/><text x="145" y="1276" class="small">Forward generation / evidence flow</text>
+<line x1="475" y1="1270" x2="535" y2="1270" stroke="#2878b5" stroke-width="3" stroke-dasharray="10 7" marker-end="url(#bluearr)"/><text x="550" y="1276" class="small">Feedback / repair routing</text>
+<text x="2325" y="1276" text-anchor="end" class="tiny">V1–V3 labels are provisional and should match the paper's formal taxonomy.</text>
+</svg>

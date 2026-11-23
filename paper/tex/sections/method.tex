@@ -1,0 +1,186 @@
+\section{Method}\label{sec:method}
+
+Our pipeline keeps the ProCAD stages---misleadingness detection, question
+asking, answering, code generation---but replaces their connecting tissue.
+Figure~\ref{fig:overview} shows the flow: a \emph{Spec Manager}
+(\S\ref{sec:spec}) owns a structured specification built from the prompt and
+clarification answers; the coder receives a rendering of that specification
+(\S\ref{sec:handoff}); a \emph{spec-grounded verifier} (\S\ref{sec:verifier})
+checks the generated program against the specification without ground truth;
+and a routing policy (\S\ref{sec:loop}) closes the loop by failure type.
+
+\subsection{Specification schema and provenance}\label{sec:spec}
+
+\paragraph{Schema.}
+The specification $s$ is a JSON object with a unit, a feature list, a
+constraint list, and a change log:
+\begin{equation*}
+s = \langle \mathrm{unit},\ \{f_i\},\ \{c_j\},\ \{r_k\}\rangle,\qquad
+f_i = \langle \mathrm{id},\ \mathrm{type},\ \mathrm{op},\ \theta_i\rangle
+\end{equation*}
+where each feature $f_i$ carries a stable identifier, a type from a fixed
+vocabulary (plate, cylinder, hole, slot, chamfer, fillet, \dots), a
+construction operation (add/subtract), and parameters $\theta_i$. Every
+parameter entry is a tuple
+$\langle \text{value},\text{unit},\text{source},\text{evidence}\rangle$,
+where \textit{evidence} quotes the sentence that supports the value.
+
+\paragraph{Provenance levels.}
+The \textit{source} field takes four values, ranked:
+\begin{center}
+\small
+\textsc{answer-confirmed} (4) $\succ$ \textsc{user-stated} (3) $\succ$\\
+\textsc{inferred} (2) $\succ$ \textsc{agent-assumed} (1).
+\end{center}
+The ranking encodes the semantics of the misleading-prompt setting: a value
+confirmed during clarification reflects the user's latest intent and
+overrides an earlier (possibly wrong) statement; a default filled by the
+system is the least trustworthy and must never silently overwrite either.
+
+\paragraph{Deterministic kernel.}
+All operations that must be \emph{correct} are implemented as pure functions
+without any LLM call:
+(i)~\texttt{normalize}, which coerces arbitrary model output into the
+canonical schema---invalid provenance tags are demoted to
+\textsc{agent-assumed}, bare values are wrapped into parameter entries, and
+missing identifiers are assigned;
+(ii)~\texttt{merge}, the provenance-ranked update rule below;
+(iii)~\texttt{unresolved}, which lists required-but-missing or
+assumed-but-unconfirmed parameters from a per-feature-type table of required
+alternatives (e.g., a hole requires \textit{radius} or \textit{diameter},
+plus \textit{depth} or \textit{through}); and
+(iv)~\texttt{render}, the coder hand-off of \S\ref{sec:handoff}.
+Because the kernel is pure, every invariant---provenance ranking, identifier
+stability, resolution logging---is verified by offline unit tests.
+
+\paragraph{Provenance-ranked merge.}
+Given the current specification $s$ and a model-proposed update $s'$ (from
+incorporating a question--answer round), the merged specification is computed
+field by field. For a parameter present in both:
+a higher-ranked source overrides a lower-ranked one;
+equal rank with a changed value also overrides (a fresh statement wins);
+equal value with higher rank upgrades the provenance tag only.
+Every override where the old value differed appends a resolution record
+$\langle \text{feature},\text{param},\text{old},\text{new},\text{source},
+\text{evidence}\rangle$ to the change log---a machine-readable account of
+\emph{where information changed}, which the verifier and the analysis in
+\S\ref{sec:evaluation:defect} consume directly. Feature identity is matched by
+identifier, with a same-type positional fallback that absorbs identifier drift
+in model output. Corrections may mark features obsolete instead of deleting
+them, so nothing confirmed ever disappears silently.
+
+\subsection{The Spec Manager agent}\label{sec:specmanager}
+
+The LLM performs exactly three \emph{perception} actions; everything else is
+kernel:
+\begin{enumerate}
+  \item \textbf{Extract} ($x \mapsto s$): read a (possibly misleading)
+  description and emit the specification, tagging what is literally written as
+  \textsc{user-stated}---without silently correcting it---and preferring to
+  omit a parameter over inventing one.
+  \item \textbf{Incorporate} ($s, \mathrm{Q\&A} \mapsto s'$): apply a
+  question--answer round; answers are authoritative and override conflicting
+  user-stated values with \textsc{answer-confirmed} provenance and quoted
+  evidence. The proposal $s'$ is then defensively reconciled by the
+  deterministic merge, so a malformed or hallucinated update can only ever
+  add \emph{lower}-ranked information.
+  \item \textbf{Propose questions} ($s \mapsto q$): ask only about
+  \texttt{unresolved} fields---one question per missing or assumed
+  parameter, requesting a value with unit, or an explicit confirmation of an
+  assumed default. If the LLM fails or hallucinates questions, a
+  deterministic template generates them from the unresolved list, so every
+  question is structurally grounded.
+\end{enumerate}
+Question rounds are driven by the specification state, not by free-form
+detection: a sample whose specification has no unresolved fields consumes no
+further questions, bounding interaction cost (\S\ref{sec:loop}).
+
+\subsection{Coder hand-off}\label{sec:handoff}
+
+The coder receives a rendering of the specification rather than a rewritten
+prompt: each feature with its parameters, placement, and count; each
+constraint; confirmed values tagged with their provenance; and assumed
+values loudly marked (e.g., \texttt{[ASSUMED DEFAULT - NOT CONFIRMED BY
+USER]}), so the coder can tell confirmed geometry from system defaults. The
+same renderer with tags stripped is our \emph{no-provenance} ablation: an
+identical structured document without source information, isolating the
+contribution of provenance from that of structure alone.
+
+\subsection{Spec-grounded verification without ground truth}
+\label{sec:verifier}
+
+The verifier answers one question: \emph{does the program realize the
+specification the user confirmed?} It never sees the original prompt or any
+reference mesh, and runs in two deterministic channels plus an optional
+semantic one.
+
+\paragraph{L1: static alignment.}
+The program is parsed with a Python AST (never executed). Numeric literals
+flowing into dimensional CadQuery calls (\texttt{box}, \texttt{circle},
+\texttt{hole}, \texttt{extrude}, \texttt{chamfer}, \dots) are collected;
+structural constants (0, 1, 90, 180, \dots), angle and count keywords are
+excluded. The check is a code-to-spec field mapping, not mere presence of a
+number: a literal grounds a value only through the call semantics and
+argument position it appears in, and mappings the analysis cannot establish
+reliably---computed expressions, aliased variables---yield an explicit
+\textsc{Uncertain} verdict rather than a silent pass. Three verdicts result:
+\begin{itemize}
+  \item \textsc{ConfirmedValueMissing} (blocking): a user-stated or
+  answer-confirmed value in $s$ has no reliably mapped literal in the
+  program---the coder dropped or altered user intent. Radius\slash diameter
+  duality is resolved in radial call contexts only.
+  \item \textsc{UnsupportedLiteral} (warning): a dimensional literal in the
+  program matches no specification value---the coder invented a dimension.
+  \item \textsc{AssumedUsed}: an agent-assumed value is realized in the
+  program. This is not a failure; it is the set of fields routed back for
+  user confirmation.
+\end{itemize}
+
+\paragraph{L2: B-rep measurement.}
+Numeric alignment cannot catch \emph{correct values with wrong operations}---
+a hole that became a boss, a cut applied to the wrong face, a reversed
+extrusion. The dynamic channel therefore executes the program and interrogates
+the resulting B-rep through the CAD kernel: measured cylinder radii, extrusion
+extents, feature counts, face and edge topology, volume, and bounding box are
+compared against the specification fields, with per-field tolerances. This
+turns the failure modes that defeat literal matching into measurable
+discrepancies (e.g., subtract vs.\ add changes face count and volume while
+leaving all literals grounded).
+
+\paragraph{L3: optional semantic channel.}
+A vision--language judge sees the specification and the program's multi-view
+renders---not the original prompt---and is asked to confirm non-numeric
+fields (feature types, boolean operations, placement). Its questions are
+derived from specification fields, not freely generated, keeping even the
+subjective channel anchored.
+
+\paragraph{Why the anchor matters.}
+Against a ground-truth mesh (Chamfer), the verifier checks the wrong thing
+for deployment; against its own renders (visual self-Q\&A
+\cite{cadcodeverify,seekcad}), it has no reference at all. Against the
+confirmed specification, the check is objective, cheap, and available every
+run. What the specification cannot express---intent the user never
+stated---remains outside the verifier's reach by construction; we quantify
+this boundary in \S\ref{sec:evaluation}.
+
+\subsection{Closing the loop: routing by failure type}\label{sec:loop}
+
+Verifier verdicts differ in \emph{what kind of failure} they indicate, and
+are routed accordingly:
+\begin{itemize}
+  \item \textsc{AssumedUsed} $\to$ \textbf{re-clarify}: the information is
+  genuinely missing from the specification; the Spec Manager asks the user,
+  merges the answer, and the coder re-renders.
+  \item \textsc{ConfirmedValueMissing} / \textsc{UnsupportedLiteral} $\to$
+  \textbf{grounded re-generation}: the information exists and is confirmed;
+  asking the user again would return the same answer. Instead the coder
+  re-generates with a field-level diagnostic (``the specification
+  requires hole\_1.radius = 5\,mm; it does not appear in your program''),
+  targeting the failure without another interaction.
+\end{itemize}
+The loop runs at most once per sample; every artifact is logged---both
+verification rounds, the route taken, the questions consumed. This
+differential routing is what lets the closed loop compete at
+\emph{equal question budgets} against pipelines that simply ask one more
+unconditional round: re-clarification is spent only where information is
+actually missing.

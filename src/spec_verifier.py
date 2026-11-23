@@ -61,6 +61,14 @@ _NONDIM_KW = {"angle", "count", "n", "combine", "clean", "tolerance",
               "forConstruction", "centered", "both", "direct", "type",
               "wires", "kind", "rule", "mode", "reverse", "weld", "filled"}
 
+# Call attribute names whose numeric argument is a radius/diameter (not a
+# linear dimension). The radius<->diameter duality (value*2 / value/2) is ONLY
+# legal against literals in these calls; a plate length 15 must not ground a
+# hole radius 30 merely because 30 == 2*15.
+_RADIAL_CALLS = {"circle", "hole", "cboreHole", "cskHole", "cylinder",
+                 "sphere", "ellipse", "revolve", "radiusArc", "threePointArc",
+                 "sagittaArc", "tangentArc"}
+
 
 class _LiteralCollector(ast.NodeVisitor):
     """Collects numeric literals that flow into dimensional CadQuery calls."""
@@ -71,6 +79,8 @@ class _LiteralCollector(ast.NodeVisitor):
         # every numeric literal anywhere (used as a weaker fallback check)
         self.all_literals: Set[float] = set()
         self._call_stack: List[str] = []
+        # name -> literal value for `x = 10; box(x, ...)` resolution
+        self._bindings: Dict[str, float] = {}
 
     def visit_Constant(self, node: ast.Constant) -> None:
         if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
@@ -80,6 +90,42 @@ class _LiteralCollector(ast.NodeVisitor):
             call_name, kw = self._call_stack[-1]
             if call_name in _DIMENSIONAL_CALLS and kw not in _NONDIM_KW:
                 self.literals.append((float(node.value), call_name, kw))
+
+    def visit_Name(self, node: ast.Name) -> None:
+        # Resolve a name passed into a dimensional call to its literal binding,
+        # e.g. `r = 5; result = circle(r)` must ground the radius 5.
+        value = self._bindings.get(node.id)
+        if value is None:
+            return
+        self.all_literals.add(value)
+        if self._call_stack:
+            call_name, kw = self._call_stack[-1]
+            if call_name in _DIMENSIONAL_CALLS and kw not in _NONDIM_KW:
+                self.literals.append((value, call_name, kw))
+
+    def _record_binding(self, target: ast.Name, value_node: ast.AST) -> None:
+        if isinstance(value_node, ast.Constant) and \
+                isinstance(value_node.value, (int, float)) and \
+                not isinstance(value_node.value, bool):
+            self._bindings[target.id] = float(value_node.value)
+        else:
+            # reassigned to an expression -> the old literal binding no longer
+            # describes this name
+            self._bindings.pop(target.id, None)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                self._record_binding(t, node.value)
+            else:
+                self.visit(t)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+        if isinstance(node.target, ast.Name):
+            self._record_binding(node.target, node.value)
 
     def visit_Call(self, node: ast.Call) -> None:
         name = self._call_name(node.func)
@@ -182,8 +228,6 @@ def verify_code_against_spec(spec: Dict[str, Any], code: str,
 
     # literals inside radius/diameter-taking calls; duality is only allowed
     # against these (otherwise plate thickness 10 could ground hole radius 5).
-    _RADIAL_CALLS = {"circle", "hole", "cboreHole", "cskHole", "cylinder",
-                     "sphere", "ellipse", "revolve"}
     radial_pool = [v for v, call_name, _ in parsed["literals"]
                    if call_name in _RADIAL_CALLS]
 
@@ -238,13 +282,14 @@ def verify_code_against_spec(spec: Dict[str, Any], code: str,
             continue
         if any(_numbers_close(value, sv) for sv in spec_values):
             continue
-        # radius/diameter duality: code circle() takes radius; a spec diameter D
-        # corresponds to code value D/2, and vice versa
-        dual = value * 2.0
-        dual_inv = value / 2.0
-        if any(_numbers_close(dual, sv) or _numbers_close(dual_inv, sv)
-               for sv in spec_values):
-            continue
+        # radius/diameter duality applies ONLY to radial call contexts
+        # (circle/hole/...); a plate length must not be grounded by 2*length.
+        if call_name in _RADIAL_CALLS:
+            dual = value * 2.0
+            dual_inv = value / 2.0
+            if any(_numbers_close(dual, sv) or _numbers_close(dual_inv, sv)
+                   for sv in spec_values):
+                continue
         issues.append({
             "code": "UNSUPPORTED_LITERAL",
             "severity": "warning",

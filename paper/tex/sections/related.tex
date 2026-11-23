@@ -1,0 +1,204 @@
+\section{Related Work}\label{sec:related}
+
+\subsection{Text-to-CAD: from command sequences to executable programs}
+\label{sec:related:t2c}
+
+Learning-based CAD generation was first formulated as sequence modeling:
+DeepCAD represents models as sketch-and-extrude command sequences and trains
+a generative network over them \cite{deepcad}, and Text2CAD pairs such
+sequences with natural-language descriptions at multiple levels of expertise
+\cite{text2cad}. The shift to large language models recast CAD generation as
+\emph{program synthesis}: LLM4CAD emits a Python-based domain-specific
+language \cite{llm4cad}, Text-to-CAD aligns parametric data with language via
+a vision--language model \cite{texttocad_vl}, and CAD-GPT augments multimodal
+LLMs with spatial-reasoning prompts to synthesize construction sequences
+\cite{cadgpt}. More recent systems generate directly executable CadQuery
+programs and run them to obtain B-rep geometry \cite{procad,cadrille}.
+
+Executable Python programs rather than opaque token vocabularies are now the
+preferred target representation as well: CADRecode reverse-engineers point
+clouds directly into CadQuery scripts with a small LLM and a
+million-program synthetic corpus \cite{cadrecode}, and CADFS collects a
+million-scale corpus of \emph{real} FeatureScript programs with complete
+modeling histories, executes them through a CAD kernel to obtain B-reps, and
+evaluates on Chamfer, normal consistency, and edge Chamfer distance
+\cite{cadfs}; CAD-Llama adapts open-weight LLMs to the same
+program-synthesis setting \cite{cadllama}. We adopt this executable-program
+view---and CADFS's multi-metric evaluation, including edge-aware distances
+that expose fine structural defects---but generate forward from language
+while tracking where every required value came from.
+
+Two further trends are directly relevant. First, \emph{structured
+intermediate tokens help}: FlexCAD achieves controllable generation and
+partial editing through hierarchy-aware masking of structured CAD text
+\cite{flexcad}, and Pointer-CAD unifies B-rep and command sequences with
+explicit pointer-based edge and face references \cite{pointercad}---structure
+in the representation buys controllability that raw free text cannot. Second,
+\emph{visual and geometric feedback during training helps the generator}:
+CADFusion alternates between learning a visual-feedback model and fine-tuning
+the LLM on that feedback \cite{cadfusion}, while FutureCAD grounds generated
+programs onto text-described B-rep primitives and uses the grounding signal as
+a reinforcement reward \cite{futurecad}. Crucially, both use feedback as a
+\emph{training-time} signal over the generator; at inference time the user's
+specification is still consumed once, as free text, with no record of which
+values were stated, assumed, or corrected.
+
+Multimodal unified representations such as CAD-MLLM \cite{cadmllm} and
+general-purpose CAD agents that combine tools with vision--language models
+\cite{caddesigner,cadassistant} broaden the range of solvable tasks, but do
+not address the provenance and verification of the design requirements
+themselves---the gap we target.
+
+\subsection{Proactive clarification of user intent}\label{sec:related:clarify}
+
+Rather than forcing a single prompt to carry every requirement, proactive
+agents ask before acting; the idea appears in task-oriented dialogue and
+information-seeking systems \cite{clarify_general} and, in CAD, is
+instantiated by ProCAD \cite{procad}: a Clarifier detects underspecified or
+conflicting prompts and asks targeted questions before a separately trained
+Coder produces CadQuery. Misleading prompts---parameters removed
+(underspecification) or duplicated with contradictory values (direct
+conflict)---are synthesized at controlled severity $K$, and an oracle user
+simulator answers from the ground-truth description. We build directly on
+this problem formulation and reuse its benchmark protocol.
+
+Our analysis, however, identifies a structural weakness: the two agents
+exchange a single rewritten description with no schema, no per-parameter
+provenance, and no post-generation check. Information lost in that rewrite is
+unrecoverable downstream, and a wrong value carried through clarification is
+undetectable without the ground-truth mesh that the benchmark happens to
+provide. We replace the free-text hand-off with a provenance-tracked
+specification, make the answering user explicitly imperfect in our
+experiments, and add a verification loop the original pipeline lacks.
+
+\subsection{Structured and editable intermediate representations}
+\label{sec:related:structured}
+
+Exposing intermediate structure has a long history in procedural and
+constructive-solid-modeling systems, where CSG trees and feature histories
+make geometry inspectable and locally editable
+\cite{requicha,featurescript,openscad}. The recent generative literature
+returns to this idea: CAD-Editor locates a target span in CAD text and
+re-infills only that span, avoiding full re-generation for edits
+\cite{cadeditor}; FlexCAD's hierarchy masking similarly preserves non-target
+parts \cite{flexcad}.
+
+Most directly related is Treellis \cite{treellis}, which has an LLM emit an
+assembly modeling language (AML)---a CSG-style tree of primitives with
+editable parameters---and presents the tree, viewport, and parameter panel as
+linked, editable views; a scoped edit sends only the selected subtree to the
+model. In a controlled study, structured editing largely eliminated the
+``regenerate everything and watch unrelated parts change'' loop that plain
+prompting produces. We take this as strong motivation that users and agents
+alike need an intermediate object between language and geometry.
+
+But Treellis's own measurements expose the other half of the problem: only 32
+of 50 generated trees were editable on the first pass (43 with exemplars and
+structural constraints), because nothing verifies that the tree faithfully
+captures the intent or that its parameters are complete. Their tree is a
+\emph{geometric} structure revealed after generation for a human to repair;
+our specification is an \emph{intent} structure built before generation, with
+every value attributed to a source, and checked by the agent itself without a
+human in the loop. The two are complementary downstream: a
+provenance-tagged specification is a natural authoring layer for an editable
+assembly tree.
+
+\subsection{Verifying and repairing generated programs}
+\label{sec:related:verify}
+
+Self-verification of LLM outputs ranges from consistency sampling
+\cite{selfcheckgpt} and self-refinement \cite{selfrefine} to execution-based
+repair, where compiler and runtime feedback drives another generation
+attempt; in CAD, cadrille trains with online RL against execution feedback
+\cite{cadrille}. The closest system, CADCodeVerify \cite{cadcodeverify},
+prompts a VLM to (i) generate binary validation questions from the
+description, (ii) answer them by looking at multi-view renders of its own
+generated object, and (iii) rewrite code from the resulting feedback, with a
+separate repair loop for compilation failures.
+
+This verifies geometry \emph{visually and self-referentially}: the questions,
+the answers, and the judged render all come from the same model, with no
+grounded reference, and holistic image questions are insensitive to local
+defects. SEEK-CAD applies the same render-and-critique loop with
+chain-of-thought reasoning on open-weight models \cite{seekcad}, and ReCAD
+improves the generator with reinforcement learning using visual feedback as
+reward \cite{recad}; both inherit the unanchored, holistic nature of the
+visual signal.
+
+Closest to our goals is CADDesigner \cite{caddesigner}, a general-purpose
+ReAct-style agent for conceptual CAD that combines three ingredients we also
+rely on: a \emph{requirement-expansion} subagent that turns a vague request
+into dimensions, constraints, assumptions, APIs, and an ordered modeling
+process; an explicit-context imperative paradigm (ECIP) that keeps modeling
+context and operation intent explicit during code generation; and iterative
+repair driven by execution tracebacks and rendered visual feedback. It is,
+to our knowledge, the clearest prior demonstration that surfacing an
+intermediate structured representation and closing an execution loop
+materially improves text-to-CAD. It differs from our method in the two
+respects that define our contribution: the expanded requirement carries no
+per-field provenance (stated vs.\ assumed is not recorded), and its repair
+signal is the program's own execution error and self-rendered views---not a
+check against the user-confirmed specification. CADDesigner is also a single
+general-purpose agent; we argue in \S\ref{sec:discussion:agents} that a small
+decomposition with a deterministic kernel is easier to verify than one
+monolithic agent, a point we return to when discussing the number of agents.
+
+A second family validates programs against geometry through the CAD kernel
+itself, but in the \emph{reverse-engineering} setting where a target mesh is
+available: CADFit casts mesh-to-CAD recovery as volumetric-IoU-guided
+optimization over executable programs, pruning operations whose marginal IoU
+contribution is non-positive and nearly eliminating invalid programs
+\cite{cadfit}; StepCAD conditions an LLM policy on the current intermediate
+geometry and performs test-time tree search with local program edits under an
+IoU objective \cite{stepcad}. Kernel-executed validation and per-step
+geometry conditioning are close in spirit to our dynamic B-rep checks, but
+their reference signal is the \emph{target mesh being reverse-engineered}---
+ground truth that exists offline in reconstruction and never exists when
+generating from a user's description.
+
+Our verifier is anchored instead to the explicit set of user-confirmed
+parameters and is performed in two deterministic channels: static alignment
+of program literals to specification fields, and direct measurement of the
+executed B-rep (radii, depths, feature counts, topology), with a vision
+channel reserved for semantics the measurements cannot cover. Failures are
+routed by cause: an unconfirmed assumption triggers another clarification
+question, while a confirmed value the coder dropped triggers a
+diagnostic-grounded regeneration rather than another question. This is closer
+in spirit to specification- and property-based program verification
+\cite{propertytesting} than to visual self-critique, and it requires no
+ground-truth mesh at inference---the reference geometry that offline Chamfer
+evaluation depends on \cite{chamfer_evals}.
+
+\subsection{Positioning}\label{sec:related:positioning}
+
+Table~\ref{tab:positioning} summarizes the axes that matter. No prior
+text-to-CAD system combines intent clarification with a provenance-tracked
+hand-off representation; no prior CAD program verifier is anchored to
+user-confirmed requirements rather than to a target mesh or an unanchored
+visual self-check; and no prior pipeline routes verification failures back to
+clarification or regeneration by failure type.
+
+\begin{table*}[t]
+  \centering
+  \caption{Positioning against the closest systems. ``GT at inference''
+  denotes whether the method consumes a reference geometry at deployment
+  time (not during offline evaluation).}
+  \label{tab:positioning}
+  \small
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lccccc}
+    \toprule
+    System & Clarification & Hand-off repr. & Deployment-time verification & Closed loop & GT at inference \\
+    \midrule
+    Text2CAD / DeepCAD \cite{text2cad,deepcad} & -- & command sequence & -- & -- & -- \\
+    ProCAD \cite{procad} & one round, oracle & free text & -- & -- & no \\
+    CADFusion / FutureCAD \cite{cadfusion,futurecad} & -- & programs + grounding & training-time & training loop & no \\
+    CADCodeVerify / SEEK-CAD \cite{cadcodeverify,seekcad} & -- & code + renders & visual self-Q\&A & verify$\to$rewrite & no \\
+    CADFit / StepCAD \cite{cadfit,stepcad} & -- & executable programs & kernel/IoU vs.\ target & search & \emph{yes (recon.\ input)} \\
+    CAD-Editor / FlexCAD \cite{cadeditor,flexcad} & -- & editable text & -- & partial edits & -- \\
+    Treellis \cite{treellis} & -- & assembly tree (humans) & -- & human edits & no \\
+    \textbf{Ours} & \textbf{on-demand, multi-round} & \textbf{provenance spec} & \textbf{AST + B-rep vs.\ spec} & \textbf{by failure type} & \textbf{no} \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table*}
